@@ -14,76 +14,67 @@ from src.agents.types import AgentRequest, AgentResponse
 from src.config.settings import get_settings
 
 PORTFOLIO_CRITIQUE_SYSTEM_PROMPT = """\
-You are a portfolio analyst. Given performance data, produce a structured \
-markdown report.
+You are a portfolio analyst. Respond in under 250 words. \
+Start with VERDICT on the first line, then use the sections below.
 
-Your response must follow this exact structure:
+VERDICT: [OUTPERFORMING | ON PAR | UNDERPERFORMING]
 
-**Assessment**
-One to two sentences summarising overall performance vs the benchmark(s).
+**Summary**
+1-2 sentences on overall performance vs benchmark(s).
 
-**Key Observations**
-- **[Label]:** observation with specific numbers
-- **[Label]:** observation with specific numbers
-(3–5 bullets)
+**Observations**
+- **[Label]:** finding with specific numbers
+- **[Label]:** finding with specific numbers
+- **[Label]:** finding with specific numbers
 
 **Suggestions**
-- **[Label]:** actionable suggestion
-- **[Label]:** actionable suggestion
-(2–3 bullets)
+- **[Label]:** actionable improvement
+- **[Label]:** actionable improvement
 
-Be direct and quantitative. Use the actual numbers from the data provided.\
+Be direct and quantitative. Use the actual numbers. Stay under 250 words.\
 """
 
 INVESTMENT_CRITIQUE_SYSTEM_PROMPT = """\
-You are an investment analyst. Given fundamental data and performance metrics \
-for a single ticker (and optionally its fit within an existing portfolio), \
-produce a structured markdown report.
+You are an investment analyst. Respond in under 250 words. \
+Start with VERDICT on the first line.
 
-Your response must follow this exact structure:
+VERDICT: [STRONG | MODERATE | WEAK | AVOID]
 
-**Assessment**
-One to two sentences summarising the investment's profile and potential.
+**Investment Case**
+1-2 sentences on the investment thesis.
 
-**Key Strengths**
+**Strengths**
 - **[Label]:** specific strength with numbers
 - **[Label]:** specific strength with numbers
-(2–3 bullets)
 
-**Key Risks**
+**Risks**
 - **[Label]:** specific risk with numbers
 - **[Label]:** specific risk with numbers
-(2–3 bullets)
 
-**Portfolio Fit (If data provided)**
-One to two sentences on how this impacts the existing portfolio (e.g., \
-correlation, volatility impact). \
-If no portfolio data is provided, omit this section.
+**Portfolio Fit** (include ONLY if portfolio fit data is provided — omit otherwise)
+1 sentence on correlation and impact.
 
-Be direct and quantitative. Use the actual numbers from the data provided.\
+Be direct and quantitative. Stay under 250 words.\
 """
 
 OPTIMIZATION_CRITIQUE_SYSTEM_PROMPT = """\
-You are a quantitative portfolio manager acting as a critic. Given an \
-optimized portfolio allocation and its efficient frontier metrics, \
-produce a structured markdown report.
+You are a quantitative portfolio manager. Respond in under 250 words. \
+Start with VERDICT on the first line.
 
-Your response must follow this exact structure:
+VERDICT: [STRONG | MODERATE | WEAK]
 
-**Assessment**
-One to two sentences summarising the proposed allocation's risk and return profile.
+**Summary**
+1-2 sentences on the allocation's risk/return profile.
 
-**Key Strengths**
+**Strengths**
 - **[Label]:** specific strength about the allocation
 - **[Label]:** specific strength
-(2–3 bullets)
 
-**Concentration & Risks**
-- **[Label]:** note any heavy concentrations or theoretical risks in the model
+**Risks**
+- **[Label]:** concentration or model limitation
 - **[Label]:** specific risk
-(2–3 bullets)
 
-Be direct and quantitative. Use the actual numbers from the allocation.\
+Be direct and quantitative. Use the actual numbers. Stay under 250 words.\
 """
 
 
@@ -123,7 +114,7 @@ class ReviewAgent(BaseAgent):
 
         message = await self._anthropic.messages.create(
             model=settings.default_model,
-            max_tokens=1500,
+            max_tokens=600,
             system=system_prompt,
             messages=[
                 {

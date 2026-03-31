@@ -10,7 +10,7 @@ export default function InfoPopover({ title, content, wikiUrl }: InfoPopoverProp
   return (
     <span className="relative ml-1 cursor-default group inline-flex items-center">
       <svg
-        className="w-3.5 h-3.5 text-gray-500 group-hover:text-gray-300 transition-colors"
+        className="w-3.5 h-3.5 text-stone-400 dark:text-gray-500 group-hover:text-stone-600 dark:group-hover:text-gray-300 transition-colors"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -24,19 +24,19 @@ export default function InfoPopover({ title, content, wikiUrl }: InfoPopoverProp
       <div
         className={[
           'absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 z-50 text-left',
-          'bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-xl',
+          'bg-white dark:bg-gray-900 border border-stone-200 dark:border-gray-700 rounded-lg px-3 py-2 shadow-xl',
           'opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto',
           'transition-opacity duration-150',
         ].join(' ')}
       >
-        {title && <p className="text-xs text-white font-semibold mb-1">{title}</p>}
-        <p className="text-xs text-slate-300 leading-snug font-normal normal-case whitespace-normal tracking-normal">{content}</p>
+        {title && <p className="text-xs text-stone-900 dark:text-white font-semibold mb-1">{title}</p>}
+        <p className="text-xs text-stone-700 dark:text-slate-300 leading-snug font-normal normal-case whitespace-normal tracking-normal">{content}</p>
         {wikiUrl && (
           <a
             href={wikiUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs text-blue-400 hover:underline mt-1 inline-block font-normal normal-case tracking-normal"
+            className="text-xs text-blue-500 dark:text-blue-400 hover:underline mt-1 inline-block font-normal normal-case tracking-normal"
           >
             Learn more →
           </a>

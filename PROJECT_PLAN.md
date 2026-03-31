@@ -369,3 +369,34 @@ To be prioritized after a stable v1.0.0 is tagged.
 - Optimizer constraints (max position size, sector limits, min holdings)
 - Screener agent for universe selection
 - Risk monitor agent for ongoing alerts
+
+---
+
+## UI/UX Design Decisions
+
+Recorded after the Stage 4 / Stage 5 UI/UX redesign pass.
+
+### Navigation
+- Replaced the left sidebar (`Sidebar.tsx`) with a sticky top navigation bar (`TopNav.tsx`).
+- Top nav contains: "Almal" wordmark (links to /), three nav links (Profiler, Investigator, Optimizer), portfolio tickers preview when loaded, and a dark/light theme toggle.
+
+### Portfolio Upload
+- Single floating action button (FAB) fixed bottom-right on all pages (`PortfolioUploadFAB.tsx`).
+- FAB opens a centered modal with drag-and-drop dropzone, parse error display, and loaded portfolio summary with a Clear button.
+- Upload zones removed from PortfolioProfiler, Investigator, and Optimizer pages.
+- Optimizer's *candidate tickers* upload zone (CSV/TXT list) is kept — only the portfolio CSV upload zone was removed.
+
+### Theme
+- Warm off-white light theme (`stone-50` page background) as the default.
+- Dark mode toggle persists preference to `localStorage` under the key `almal-theme`.
+- Implemented via `ThemeContext.tsx` (ThemeProvider + useTheme hook).
+- Tailwind dark mode uses `@custom-variant dark (&:where(.dark, .dark *))` variant (class-based).
+
+### AI Narrative
+- Responses capped at ~250 words (max_tokens reduced from 1500 to 600).
+- All three system prompts (portfolio critique, investment critique, optimization critique) updated to require a `VERDICT: [VALUE]` line as the first line.
+- Frontend `NarrativeBlock.tsx` component parses the VERDICT line and renders a coloured badge.
+- VERDICT badge colours: OUTPERFORMING/STRONG = emerald, ON PAR/MODERATE = amber, WEAK = orange, UNDERPERFORMING/AVOID = red.
+
+### Mobile
+- Desktop-first for now. No responsive breakpoint optimisations beyond existing grid usage.

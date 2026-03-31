@@ -1,12 +1,11 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import _Plot from 'react-plotly.js';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import MetricCard from '../components/MetricCard';
 import InfoPopover from '../components/InfoPopover';
-import { parseCSV } from '../utils/csv';
+import NarrativeBlock from '../components/NarrativeBlock';
 import type { Portfolio } from '../utils/csv';
 import { useAppContext } from '../context/AppContext';
+import { useTheme } from '../context/ThemeContext';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot = (_Plot as any).default ?? _Plot;
@@ -108,12 +107,14 @@ function formatCurrency(n: number | null | undefined): string {
 export default function Investigator() {
   const context = useAppContext();
   const {
-    portfolio, setPortfolio,
+    portfolio,
     investigatorSearchQuery: searchQuery, setInvestigatorSearchQuery: setSearchQuery,
     selectedTicker, setSelectedTicker,
     investigatorResult, setInvestigatorResult: setAnalysisResult,
     investigatorNarrative: analysisNarrative, setInvestigatorNarrative: setAnalysisNarrative
   } = context;
+
+  const { isDark } = useTheme();
 
   const analysisResult = investigatorResult as TickerAnalysisResult | null;
 
@@ -125,10 +126,10 @@ export default function Investigator() {
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
-  // Portfolio File State
-  const [parseError, setParseError] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Plotly theme colors
+  const gridcolor = isDark ? '#374151' : '#e5e7eb';
+  const axisColor = isDark ? '#9ca3af' : '#6b7280';
+  const fontColor = isDark ? '#d1d5db' : '#374151';
 
   // ---- Search Handling -----------------------------------------------------
 
@@ -190,44 +191,6 @@ export default function Investigator() {
     }
   }
 
-  // ---- File Handling -------------------------------------------------------
-
-  function handleFile(file: File) {
-    setParseError(null);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const text = e.target?.result as string;
-        const parsed = parseCSV(text);
-        setPortfolio(parsed);
-        // Automatically rerun analysis if a ticker is already selected
-        if (selectedTicker) {
-          fetchAnalysis(selectedTicker, parsed);
-        }
-      } catch (err) {
-        setParseError(err instanceof Error ? err.message : 'Failed to parse CSV.');
-      }
-    };
-    reader.readAsText(file);
-  }
-
-  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  };
-
-  const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-  const onDragLeave = () => setIsDragging(false);
-  const onFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) handleFile(file);
-  };
-
   // ---- Rendering Helpers ---------------------------------------------------
 
   function renderChart() {
@@ -237,8 +200,8 @@ export default function Investigator() {
     const closes = bars.map((b) => b.close);
 
     return (
-      <div className="bg-gray-900 rounded-lg p-4">
-        <h2 className="text-sm font-medium text-gray-300 mb-3 uppercase tracking-wide">
+      <div className="bg-white dark:bg-gray-900 rounded-lg p-4 border border-stone-200 dark:border-gray-800">
+        <h2 className="text-sm font-medium text-stone-600 dark:text-gray-300 mb-3 uppercase tracking-wide">
           1-Year Price History
         </h2>
         <Plot
@@ -256,41 +219,15 @@ export default function Investigator() {
             paper_bgcolor: 'transparent',
             plot_bgcolor: 'transparent',
             margin: { t: 10, r: 20, b: 40, l: 50 },
-            xaxis: { color: '#9ca3af', gridcolor: '#374151' },
-            yaxis: { color: '#9ca3af', gridcolor: '#374151', tickprefix: '$' },
-            font: { color: '#d1d5db' },
+            xaxis: { color: axisColor, gridcolor },
+            yaxis: { color: axisColor, gridcolor, tickprefix: '$' },
+            font: { color: fontColor },
             autosize: true,
           }}
           config={{ displayModeBar: false, responsive: true }}
           style={{ width: '100%', height: 320 }}
           useResizeHandler
         />
-      </div>
-    );
-  }
-
-  function renderNarrative() {
-    if (!analysisNarrative) return null;
-    return (
-      <div className="bg-slate-800 border border-slate-700 rounded-lg p-5">
-        <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">
-          AI Investment Critique
-        </p>
-        <div className="prose-sm">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              h2: ({ children }) => <h2 className="font-semibold text-slate-100">{children}</h2>,
-              h3: ({ children }) => <h3 className="font-semibold text-slate-100">{children}</h3>,
-              strong: ({ children }) => <strong className="font-semibold text-slate-100">{children}</strong>,
-              ul: ({ children }) => <ul className="list-disc list-inside space-y-1">{children}</ul>,
-              li: ({ children }) => <li className="text-slate-300">{children}</li>,
-              p: ({ children }) => <p className="text-slate-200">{children}</p>,
-            }}
-          >
-            {analysisNarrative}
-          </ReactMarkdown>
-        </div>
       </div>
     );
   }
@@ -305,20 +242,20 @@ export default function Investigator() {
     const sharpeChange = simulated_metrics.sharpe_ratio - current_metrics.sharpe_ratio;
 
     return (
-      <div className="bg-gray-900 rounded-lg p-5 space-y-4">
+      <div className="bg-white dark:bg-gray-900 rounded-lg p-5 border border-stone-200 dark:border-gray-800 space-y-4">
         <div>
-          <h2 className="text-sm font-medium text-gray-300 uppercase tracking-wide">
+          <h2 className="text-sm font-medium text-stone-600 dark:text-gray-300 uppercase tracking-wide">
             Portfolio Fit (Assuming 5% Allocation)
           </h2>
-          <p className="text-xs text-gray-400 mt-1">
+          <p className="text-xs text-stone-500 dark:text-gray-400 mt-1">
             Simulated impact on your portfolio metrics if you allocated 5% weight to {selectedTicker}.
             This assumes a simple buy-and-hold linear blend over the trailing 1-year historical price data, with no complex rebalancing.
           </p>
         </div>
 
         <div className="flex flex-wrap gap-4">
-          <div className="bg-gray-800 rounded-md p-4 flex-1">
-            <p className="text-sm text-gray-400 flex items-center">
+          <div className="bg-stone-50 dark:bg-gray-800 rounded-md p-4 flex-1">
+            <p className="text-sm text-stone-500 dark:text-gray-400 flex items-center">
               Correlation to Portfolio
               <InfoPopover
                 title="Correlation"
@@ -326,14 +263,14 @@ export default function Investigator() {
                 wikiUrl="https://en.wikipedia.org/wiki/Correlation_(statistics)"
               />
             </p>
-            <p className="text-2xl font-semibold text-white mt-1">
+            <p className="text-2xl font-semibold text-stone-900 dark:text-white mt-1">
               {correlation.toFixed(2)}
             </p>
-            <p className="text-xs text-gray-500 mt-1">1.0 = moves exactly together</p>
+            <p className="text-xs text-stone-400 dark:text-gray-500 mt-1">1.0 = moves exactly together</p>
           </div>
 
-          <div className="bg-gray-800 rounded-md p-4 flex-1">
-            <p className="text-sm text-gray-400 flex items-center">
+          <div className="bg-stone-50 dark:bg-gray-800 rounded-md p-4 flex-1">
+            <p className="text-sm text-stone-500 dark:text-gray-400 flex items-center">
               Simulated Ann. Return
               <InfoPopover
                 title="Simulated Annualized Return"
@@ -341,16 +278,16 @@ export default function Investigator() {
                 wikiUrl="https://en.wikipedia.org/wiki/Compound_annual_growth_rate"
               />
             </p>
-            <p className="text-2xl font-semibold text-white mt-1">
+            <p className="text-2xl font-semibold text-stone-900 dark:text-white mt-1">
               {pct(simulated_metrics.annualized_return)}
             </p>
-            <p className={`text-xs mt-1 ${retChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            <p className={`text-xs mt-1 ${retChange >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
               {retChange >= 0 ? '+' : ''}{pct(retChange, 2)} vs current
             </p>
           </div>
 
-          <div className="bg-gray-800 rounded-md p-4 flex-1">
-            <p className="text-sm text-gray-400 flex items-center">
+          <div className="bg-stone-50 dark:bg-gray-800 rounded-md p-4 flex-1">
+            <p className="text-sm text-stone-500 dark:text-gray-400 flex items-center">
               Simulated Volatility
               <InfoPopover
                 title="Simulated Volatility"
@@ -358,16 +295,16 @@ export default function Investigator() {
                 wikiUrl="https://en.wikipedia.org/wiki/Volatility_(finance)"
               />
             </p>
-            <p className="text-2xl font-semibold text-white mt-1">
+            <p className="text-2xl font-semibold text-stone-900 dark:text-white mt-1">
               {pct(simulated_metrics.volatility)}
             </p>
-            <p className={`text-xs mt-1 ${volChange < 0 ? 'text-green-400' : 'text-red-400'}`}>
+            <p className={`text-xs mt-1 ${volChange < 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
               {volChange >= 0 ? '+' : ''}{pct(volChange, 2)} vs current
             </p>
           </div>
 
-          <div className="bg-gray-800 rounded-md p-4 flex-1">
-            <p className="text-sm text-gray-400 flex items-center">
+          <div className="bg-stone-50 dark:bg-gray-800 rounded-md p-4 flex-1">
+            <p className="text-sm text-stone-500 dark:text-gray-400 flex items-center">
               Simulated Sharpe
               <InfoPopover
                 title="Simulated Sharpe Ratio"
@@ -375,10 +312,10 @@ export default function Investigator() {
                 wikiUrl="https://en.wikipedia.org/wiki/Sharpe_ratio"
               />
             </p>
-            <p className="text-2xl font-semibold text-white mt-1">
+            <p className="text-2xl font-semibold text-stone-900 dark:text-white mt-1">
               {fmt2(simulated_metrics.sharpe_ratio)}
             </p>
-            <p className={`text-xs mt-1 ${sharpeChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            <p className={`text-xs mt-1 ${sharpeChange >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
               {sharpeChange >= 0 ? '+' : ''}{fmt2(sharpeChange)} vs current
             </p>
           </div>
@@ -395,19 +332,19 @@ export default function Investigator() {
     <div className="p-8 max-w-6xl mx-auto space-y-8">
       {/* Title & Header */}
       <div>
-        <h1 className="text-2xl font-semibold text-white mb-2">Investment Investigator</h1>
-        <p className="text-gray-400">
+        <h1 className="text-2xl font-semibold text-stone-900 dark:text-white mb-2">Investment Investigator</h1>
+        <p className="text-stone-600 dark:text-gray-400">
           Deep-dive into individual securities with AI-assisted research and fundamental analysis.
-          Optionally upload your portfolio to see how a new asset fits your strategy.
+          {portfolio && ' Portfolio context is active — portfolio fit analysis will be included.'}
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-        {/* Left Column: Controls (Search + Portfolio Upload) */}
+        {/* Left Column: Search */}
         <div className="space-y-6">
-          <div className="bg-gray-900 rounded-lg p-5">
-            <h2 className="text-sm font-medium text-gray-300 mb-3 uppercase tracking-wide">
+          <div className="bg-white dark:bg-gray-900 rounded-lg p-5 border border-stone-200 dark:border-gray-800">
+            <h2 className="text-sm font-medium text-stone-600 dark:text-gray-300 mb-3 uppercase tracking-wide">
               Search Asset
             </h2>
             <form onSubmit={handleSearch} className="relative">
@@ -416,7 +353,7 @@ export default function Investigator() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Ticker or company name..."
-                className="w-full bg-gray-800 text-white border border-gray-700 rounded-md px-4 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-white dark:bg-gray-800 text-stone-900 dark:text-white border border-stone-300 dark:border-gray-700 rounded-md px-4 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
               <button
                 type="submit"
@@ -427,69 +364,32 @@ export default function Investigator() {
               </button>
 
               {showSearchDropdown && searchResults.length > 0 && (
-                <ul className="absolute z-10 w-full mt-1 bg-gray-800 border border-gray-700 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                <ul className="absolute z-10 w-full mt-1 bg-white dark:bg-gray-800 border border-stone-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-y-auto">
                   {searchResults.map((res) => (
                     <li
                       key={res.symbol}
                       onClick={() => fetchAnalysis(res.symbol, portfolio)}
-                      className="px-4 py-2 hover:bg-gray-700 cursor-pointer text-gray-200"
+                      className="px-4 py-2 hover:bg-stone-50 dark:hover:bg-gray-700 cursor-pointer text-stone-700 dark:text-gray-200"
                     >
-                      <strong className="text-white">{res.symbol}</strong> — {res.name}
+                      <strong className="text-stone-900 dark:text-white">{res.symbol}</strong> — {res.name}
                     </li>
                   ))}
                 </ul>
               )}
             </form>
           </div>
-
-          <div className="bg-gray-900 rounded-lg p-5 space-y-3">
-            <h2 className="text-sm font-medium text-gray-300 uppercase tracking-wide">
-              Portfolio Context (Optional)
-            </h2>
-            <div
-              onDrop={onDrop}
-              onDragOver={onDragOver}
-              onDragLeave={onDragLeave}
-              onClick={() => fileInputRef.current?.click()}
-              className={[
-                'border border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors',
-                isDragging
-                  ? 'border-blue-400 bg-blue-950/30'
-                  : 'border-gray-700 hover:border-gray-500 bg-gray-800/50',
-              ].join(' ')}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv"
-                className="hidden"
-                onChange={onFileInputChange}
-              />
-              {portfolio ? (
-                <div className="space-y-1">
-                  <p className="text-green-400 font-medium text-sm">
-                    {portfolio.holdings.length} holdings loaded
-                  </p>
-                  <p className="text-gray-500 text-xs mt-1">Click or drop to replace</p>
-                </div>
-              ) : (
-                <p className="text-gray-400 text-sm">Drag & drop CSV to enable portfolio fit</p>
-              )}
-            </div>
-            {parseError && <p className="text-red-400 text-xs">{parseError}</p>}
-          </div>
         </div>
 
         {/* Right Column: Analysis Dashboard */}
         <div className="lg:col-span-2 space-y-6">
           {loadingAnalysis && (
-            <div className="flex h-40 items-center justify-center bg-gray-900 rounded-lg border border-gray-800">
-              <p className="text-blue-400 animate-pulse">Running analysis...</p>
+            <div className="flex h-40 items-center justify-center bg-white dark:bg-gray-900 rounded-lg border border-stone-200 dark:border-gray-800">
+              <p className="text-blue-500 dark:text-blue-400 animate-pulse">Running analysis...</p>
             </div>
           )}
 
           {apiError && (
-             <div className="bg-red-900/40 border border-red-700 rounded-lg px-4 py-3 text-red-300 text-sm">
+             <div className="bg-red-50 dark:bg-red-900/40 border border-red-200 dark:border-red-700 rounded-lg px-4 py-3 text-red-700 dark:text-red-300 text-sm">
                {apiError}
              </div>
           )}
@@ -498,42 +398,42 @@ export default function Investigator() {
             <div className="space-y-6 animate-fadeIn">
 
               {/* Info Header */}
-              <div className="bg-gray-900 rounded-lg p-5">
+              <div className="bg-white dark:bg-gray-900 rounded-lg p-5 border border-stone-200 dark:border-gray-800">
                 <div className="flex justify-between items-start">
                   <div>
-                    <h2 className="text-3xl font-bold text-white">
-                      {selectedTicker} <span className="text-gray-500 text-xl font-normal ml-2">{analysisResult.info.name}</span>
+                    <h2 className="text-3xl font-bold text-stone-900 dark:text-white">
+                      {selectedTicker} <span className="text-stone-400 dark:text-gray-500 text-xl font-normal ml-2">{analysisResult.info.name}</span>
                     </h2>
-                    <p className="text-gray-400 mt-1">
+                    <p className="text-stone-500 dark:text-gray-400 mt-1">
                       {analysisResult.info.sector} • {analysisResult.info.industry}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-3xl font-bold text-white">
+                    <p className="text-3xl font-bold text-stone-900 dark:text-white">
                       ${analysisResult.info.current_price?.toFixed(2) ?? 'N/A'}
                     </p>
-                    <p className="text-gray-400 mt-1">Current Price</p>
+                    <p className="text-stone-500 dark:text-gray-400 mt-1">Current Price</p>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 border-t border-gray-800 pt-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 border-t border-stone-100 dark:border-gray-800 pt-4">
                   <div>
-                    <p className="text-xs text-gray-500 uppercase tracking-wide">Market Cap</p>
-                    <p className="text-lg text-white font-medium">{formatCurrency(analysisResult.info.market_cap)}</p>
+                    <p className="text-xs text-stone-400 dark:text-gray-500 uppercase tracking-wide">Market Cap</p>
+                    <p className="text-lg text-stone-900 dark:text-white font-medium">{formatCurrency(analysisResult.info.market_cap)}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 uppercase tracking-wide">P/E Ratio</p>
-                    <p className="text-lg text-white font-medium">{analysisResult.info.pe_ratio?.toFixed(2) ?? 'N/A'}</p>
+                    <p className="text-xs text-stone-400 dark:text-gray-500 uppercase tracking-wide">P/E Ratio</p>
+                    <p className="text-lg text-stone-900 dark:text-white font-medium">{analysisResult.info.pe_ratio?.toFixed(2) ?? 'N/A'}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 uppercase tracking-wide">Dividend Yield</p>
-                    <p className="text-lg text-white font-medium">
+                    <p className="text-xs text-stone-400 dark:text-gray-500 uppercase tracking-wide">Dividend Yield</p>
+                    <p className="text-lg text-stone-900 dark:text-white font-medium">
                       {analysisResult.info.dividend_yield ? pct(analysisResult.info.dividend_yield) : 'N/A'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 uppercase tracking-wide">52W Range</p>
-                    <p className="text-lg text-white font-medium">
+                    <p className="text-xs text-stone-400 dark:text-gray-500 uppercase tracking-wide">52W Range</p>
+                    <p className="text-lg text-stone-900 dark:text-white font-medium">
                       ${analysisResult.info.week_52_low?.toFixed(2) ?? '?'} - ${analysisResult.info.week_52_high?.toFixed(2) ?? '?'}
                     </p>
                   </div>
@@ -579,13 +479,15 @@ export default function Investigator() {
               {renderPortfolioFit()}
 
               {/* Narrative Critique */}
-              {renderNarrative()}
+              {analysisNarrative && (
+                <NarrativeBlock narrative={analysisNarrative} title="AI Investment Critique" />
+              )}
             </div>
           )}
 
           {!loadingAnalysis && !analysisResult && !apiError && (
-             <div className="flex flex-col items-center justify-center h-64 border border-dashed border-gray-700 rounded-lg text-gray-500 p-8 text-center bg-gray-900/30">
-               <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-gray-600 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+             <div className="flex flex-col items-center justify-center h-64 border border-dashed border-stone-300 dark:border-gray-700 rounded-lg text-stone-400 dark:text-gray-500 p-8 text-center bg-white dark:bg-gray-900/30">
+               <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-stone-300 dark:text-gray-600 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M21 21l-5.197-5.197" />
                </svg>

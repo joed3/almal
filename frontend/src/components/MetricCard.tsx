@@ -24,20 +24,20 @@ export default function MetricCard({
 }: MetricCardProps) {
   const valueColor =
     positive === true
-      ? 'text-green-400'
+      ? 'text-green-600 dark:text-green-400'
       : positive === false
-        ? 'text-red-400'
-        : 'text-white';
+        ? 'text-red-600 dark:text-red-400'
+        : 'text-stone-900 dark:text-white';
 
   return (
-    <div className="relative group bg-gray-800 rounded-lg px-4 py-3 flex flex-col gap-1 min-w-[120px]">
+    <div className="relative group bg-stone-50 dark:bg-gray-800 rounded-lg px-4 py-3 flex flex-col gap-1 min-w-[120px]">
       {/* Header row: label + info icon */}
       <div className="flex items-center justify-between">
-        <span className="text-xs text-gray-400 uppercase tracking-wide">{label}</span>
+        <span className="text-xs text-stone-500 dark:text-gray-400 uppercase tracking-wide">{label}</span>
         {/* Info icon with tooltip */}
         <span className="relative ml-1 cursor-default">
           <svg
-            className="w-3.5 h-3.5 text-gray-500 group-hover:text-gray-300 transition-colors"
+            className="w-3.5 h-3.5 text-stone-400 dark:text-gray-500 group-hover:text-stone-600 dark:group-hover:text-gray-300 transition-colors"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -51,17 +51,17 @@ export default function MetricCard({
           <div
             className={[
               'absolute right-0 bottom-full mb-1 w-56 z-50',
-              'bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-xl',
+              'bg-white dark:bg-gray-900 border border-stone-200 dark:border-gray-700 rounded-lg px-3 py-2 shadow-xl',
               'opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto',
               'transition-opacity duration-150',
             ].join(' ')}
           >
-            <p className="text-xs text-slate-300 leading-snug">{description}</p>
+            <p className="text-xs text-stone-700 dark:text-slate-300 leading-snug">{description}</p>
             <a
               href={wikiUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-xs text-blue-400 hover:underline mt-1 inline-block"
+              className="text-xs text-blue-500 dark:text-blue-400 hover:underline mt-1 inline-block"
             >
               Learn more →
             </a>
@@ -72,7 +72,7 @@ export default function MetricCard({
       {/* Main value */}
       <span className={`text-lg font-semibold ${valueColor}`}>{value}</span>
       {sublabel && (
-        <span className="text-xs text-gray-500 -mt-0.5">{sublabel}</span>
+        <span className="text-xs text-stone-400 dark:text-gray-500 -mt-0.5">{sublabel}</span>
       )}
 
       {/* Benchmark comparison rows */}
@@ -80,8 +80,8 @@ export default function MetricCard({
         <div className="mt-1 space-y-0.5">
           {benchmarks.map((bm) => (
             <div key={bm.ticker} className="flex items-center justify-between gap-2">
-              <span className="text-xs text-gray-500 font-medium">{bm.ticker}</span>
-              <span className="text-xs text-gray-400">{bm.value}</span>
+              <span className="text-xs text-stone-500 dark:text-gray-500 font-medium">{bm.ticker}</span>
+              <span className="text-xs text-stone-600 dark:text-gray-400">{bm.value}</span>
             </div>
           ))}
         </div>

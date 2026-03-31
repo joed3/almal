@@ -1,13 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { useAppContext } from '../context/AppContext';
 import type { OptimizationStrategy } from '../context/AppContext';
-import { parseCSV } from '../utils/csv';
 import AllocationTable from '../components/AllocationTable';
 import EfficientFrontierChart from '../components/EfficientFrontierChart';
 import InfoPopover from '../components/InfoPopover';
+import NarrativeBlock from '../components/NarrativeBlock';
 
 interface SearchResult {
   symbol: string;
@@ -50,7 +48,6 @@ export default function Optimizer() {
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const portfolioInputRef = useRef<HTMLInputElement>(null);
 
   const handleSearchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,22 +127,6 @@ export default function Optimizer() {
 
   const onDragLeave = () => setIsDragging(false);
 
-  const handlePortfolioFile = (file: File) => {
-    setError(null);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const text = e.target?.result as string;
-        const parsed = parseCSV(text);
-        setPortfolio(parsed);
-        setRebalanceMode(true);
-      } catch (err: any) {
-        setError(err.message || 'Failed to parse portfolio CSV.');
-      }
-    };
-    reader.readAsText(file);
-  };
-
   const runOptimization = async () => {
     const current_portfolio: Record<string, number> = {};
     const activeTickers = [...candidates];
@@ -196,8 +177,8 @@ export default function Optimizer() {
   return (
     <div className="p-8 max-w-7xl mx-auto">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight text-white">Portfolio Optimizer</h1>
-        <p className="text-gray-400 mt-2">
+        <h1 className="text-3xl font-bold tracking-tight text-stone-900 dark:text-white">Portfolio Optimizer</h1>
+        <p className="text-stone-600 dark:text-gray-400 mt-2">
           Harness mathematical algorithms to compute the optimal weight distribution for a set of candidate investments based on your risk tolerance.
         </p>
       </div>
@@ -206,61 +187,51 @@ export default function Optimizer() {
 
         {/* Left Column: Configuration */}
         <div className="space-y-6">
-          <div className="bg-gray-900 rounded-lg p-5 border border-gray-800 shadow-md">
-            <h2 className="text-lg font-semibold text-white mb-4">Configuration</h2>
+          <div className="bg-white dark:bg-gray-900 rounded-lg p-5 border border-stone-200 dark:border-gray-800 shadow-sm">
+            <h2 className="text-lg font-semibold text-stone-900 dark:text-white mb-4">Configuration</h2>
 
             <div className="space-y-4">
 
-              {/* Portfolio Load Dropzone */}
+              {/* No portfolio loaded: subtle info message */}
               {!portfolio && (
-                <div
-                  className="border border-dashed border-gray-700 hover:border-blue-500 bg-gray-950 rounded-lg p-4 text-center cursor-pointer transition-colors"
-                  onClick={() => portfolioInputRef.current?.click()}
-                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                  onDrop={(e) => {
-                    e.preventDefault(); e.stopPropagation();
-                    if (e.dataTransfer.files?.[0]) handlePortfolioFile(e.dataTransfer.files[0]);
-                  }}
-                >
-                  <input
-                    type="file"
-                    accept=".csv,.txt"
-                    className="hidden"
-                    ref={portfolioInputRef}
-                    onChange={(e) => {
-                      if (e.target.files?.[0]) handlePortfolioFile(e.target.files[0]);
-                    }}
-                  />
-                  <p className="text-sm font-medium text-blue-400">Load Existing Portfolio</p>
-                  <p className="text-xs text-gray-500 mt-1">Drag & drop CSV to enable Rebalance Mode</p>
+                <div className="flex items-start gap-2 p-3 bg-stone-50 dark:bg-gray-800 border border-stone-200 dark:border-gray-700 rounded-md">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-stone-400 dark:text-gray-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="8" strokeLinecap="round" />
+                    <line x1="12" y1="12" x2="12" y2="16" strokeLinecap="round" />
+                  </svg>
+                  <p className="text-xs text-stone-500 dark:text-gray-400">
+                    Load a portfolio via the button below to enable Rebalance Mode.
+                  </p>
                 </div>
               )}
 
+              {/* Rebalance mode toggle (visible when portfolio is loaded) */}
               {portfolio && (
-                <div className="flex items-center justify-between gap-2 mb-4 p-3 bg-gray-950 border border-gray-700 rounded-md">
+                <div className="flex items-center justify-between gap-2 p-3 bg-stone-50 dark:bg-gray-800 border border-stone-200 dark:border-gray-700 rounded-md">
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
                       id="rebalanceToggle"
                       checked={rebalanceMode}
                       onChange={(e) => setRebalanceMode(e.target.checked)}
-                      className="w-4 h-4 text-blue-600 bg-gray-800 border-gray-600 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer"
+                      className="w-4 h-4 text-blue-600 bg-white dark:bg-gray-700 border-stone-300 dark:border-gray-600 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer"
                     />
-                    <label htmlFor="rebalanceToggle" className="text-sm font-medium text-gray-300 cursor-pointer select-none">
+                    <label htmlFor="rebalanceToggle" className="text-sm font-medium text-stone-700 dark:text-gray-300 cursor-pointer select-none">
                       Rebalance Mode (using loaded portfolio)
                     </label>
                   </div>
                   <button
                     onClick={() => { setPortfolio(null); setRebalanceMode(false); }}
-                    className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                    className="text-xs text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 transition-colors"
                   >
-                    Clear Loader
+                    Clear
                   </button>
                 </div>
               )}
 
               <div>
-                <label className="block text-sm font-medium text-gray-400 mb-1">
+                <label className="block text-sm font-medium text-stone-600 dark:text-gray-400 mb-1">
                   {rebalanceMode ? 'New Cash to Add ($)' : 'Principal Amount ($)'}
                 </label>
                 <input
@@ -269,16 +240,16 @@ export default function Optimizer() {
                   step="100"
                   value={principal}
                   onChange={(e) => setPrincipal(Number(e.target.value))}
-                  className="w-full bg-gray-950 border border-gray-700 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-full bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded-md py-2 px-3 text-stone-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-400 mb-1">Optimization Strategy</label>
+                <label className="block text-sm font-medium text-stone-600 dark:text-gray-400 mb-1">Optimization Strategy</label>
                 <select
                   value={strategy}
                   onChange={(e) => setStrategy(e.target.value as OptimizationStrategy)}
-                  className="w-full bg-gray-950 border border-gray-700 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-full bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded-md py-2 px-3 text-stone-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                 >
                   <option value="max_sharpe">Moderate (Max Sharpe)</option>
                   <option value="min_volatility">Conservative (Min Volatility)</option>
@@ -288,12 +259,12 @@ export default function Optimizer() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-400 mb-1 flex justify-between">
+                <label className="block text-sm font-medium text-stone-600 dark:text-gray-400 mb-1 flex justify-between">
                   <span>Candidate Universe</span>
                   {portfolio && portfolio.holdings.length > 0 && (
                     <button
                       onClick={handleLoadFromPortfolio}
-                      className="text-blue-400 hover:text-blue-300 text-xs font-semibold"
+                      className="text-blue-500 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 text-xs font-semibold"
                     >
                       Load Portfolio Tickers
                     </button>
@@ -306,7 +277,7 @@ export default function Optimizer() {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search ticker or company..."
-                    className="flex-1 bg-gray-950 border border-gray-700 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-600"
+                    className="flex-1 bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded-md py-2 px-3 text-stone-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-stone-400 dark:placeholder-gray-600"
                   />
                   <button
                     type="submit"
@@ -317,23 +288,26 @@ export default function Optimizer() {
                   </button>
 
                   {showSearchDropdown && searchResults.length > 0 && (
-                    <ul className="absolute top-11 z-10 w-full mt-1 bg-gray-800 border border-gray-700 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                    <ul className="absolute top-11 z-10 w-full mt-1 bg-white dark:bg-gray-800 border border-stone-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-y-auto">
                       {searchResults.map((res) => (
                         <li
                           key={res.symbol}
                           onClick={() => selectSearchResult(res.symbol)}
-                          className="px-4 py-2 hover:bg-gray-700 cursor-pointer text-gray-200 text-sm"
+                          className="px-4 py-2 hover:bg-stone-50 dark:hover:bg-gray-700 cursor-pointer text-stone-700 dark:text-gray-200 text-sm"
                         >
-                          <strong className="text-white">{res.symbol}</strong> — {res.name}
+                          <strong className="text-stone-900 dark:text-white">{res.symbol}</strong> — {res.name}
                         </li>
                       ))}
                     </ul>
                   )}
                 </form>
 
+                {/* Ticker CSV/TXT dropzone — this stays */}
                 <div
                   className={`border-2 border-dashed rounded-md p-4 text-center transition-colors cursor-pointer ${
-                    isDragging ? 'border-blue-500 bg-blue-500/10' : 'border-gray-700 hover:border-gray-500'
+                    isDragging
+                      ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/30'
+                      : 'border-stone-300 dark:border-gray-700 hover:border-stone-400 dark:hover:border-gray-500'
                   }`}
                   onDragOver={onDragOver}
                   onDragLeave={onDragLeave}
@@ -349,26 +323,26 @@ export default function Optimizer() {
                       if (e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
                     }}
                   />
-                  <p className="text-sm text-gray-400">Drag a CSV/TXT list of tickers here</p>
+                  <p className="text-sm text-stone-500 dark:text-gray-400">Drag a CSV/TXT list of tickers here</p>
                 </div>
 
                 <div className="flex flex-wrap gap-2 mt-4">
                   {candidates.map(ticker => (
                     <span
                       key={ticker}
-                      className="inline-flex items-center px-2 py-1 rounded bg-gray-800 text-xs font-semibold text-gray-200 border border-gray-700"
+                      className="inline-flex items-center px-2 py-1 rounded bg-stone-100 dark:bg-gray-800 text-xs font-semibold text-stone-700 dark:text-gray-200 border border-stone-200 dark:border-gray-700"
                     >
                       {ticker}
                       <button
                         onClick={() => removeTicker(ticker)}
-                        className="ml-1 text-gray-500 hover:text-red-400"
+                        className="ml-1 text-stone-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400"
                       >
                         &times;
                       </button>
                     </span>
                   ))}
                   {candidates.length === 0 && (
-                    <span className="text-sm text-gray-600 italic">No candidates added.</span>
+                    <span className="text-sm text-stone-400 dark:text-gray-600 italic">No candidates added.</span>
                   )}
                 </div>
               </div>
@@ -377,7 +351,7 @@ export default function Optimizer() {
                 <button
                   onClick={runOptimization}
                   disabled={loading || (candidates.length < 2 && !rebalanceMode)}
-                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-md py-3 transition-colors shadow-lg"
+                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-md py-3 transition-colors shadow-sm"
                 >
                   {loading ? 'Solving...' : 'Run Optimization'}
                 </button>
@@ -387,8 +361,8 @@ export default function Optimizer() {
           </div>
 
           {error && (
-            <div className="bg-red-900/50 border border-red-500/50 rounded-lg p-4 animate-fadeIn">
-              <p className="text-red-400 text-sm">{error}</p>
+            <div className="bg-red-50 dark:bg-red-900/40 border border-red-200 dark:border-red-700 rounded-lg p-4">
+              <p className="text-red-700 dark:text-red-400 text-sm">{error}</p>
             </div>
           )}
         </div>
@@ -396,8 +370,8 @@ export default function Optimizer() {
         {/* Right Column: Results Dashboard */}
         <div className="lg:col-span-2 space-y-6">
           {!result && !loading && (
-             <div className="flex flex-col items-center justify-center h-full min-h-[400px] border-2 border-dashed border-gray-800 rounded-xl text-gray-500">
-               <svg className="w-12 h-12 mb-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+             <div className="flex flex-col items-center justify-center h-full min-h-[400px] border-2 border-dashed border-stone-200 dark:border-gray-800 rounded-xl text-stone-400 dark:text-gray-500">
+               <svg className="w-12 h-12 mb-4 text-stone-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                </svg>
                <p>Select your universe and execute to view allocation results.</p>
@@ -414,8 +388,8 @@ export default function Optimizer() {
             <div className="space-y-6 animate-fadeIn flex flex-col">
 
               <div className="grid grid-cols-3 gap-4">
-                <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-                  <div className="text-sm text-gray-400 mb-1 flex items-center gap-1">
+                <div className="bg-white dark:bg-gray-900 border border-stone-200 dark:border-gray-700 rounded-lg p-4">
+                  <div className="text-sm text-stone-500 dark:text-gray-400 mb-1 flex items-center gap-1">
                     Expected Annual Return
                     <InfoPopover
                       title="Expected Annual Return"
@@ -423,12 +397,12 @@ export default function Optimizer() {
                       wikiUrl="https://en.wikipedia.org/wiki/Expected_return"
                     />
                   </div>
-                  <div className="text-2xl font-bold text-emerald-400">
+                  <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
                     {(result.result.metrics.expected_annual_return * 100).toFixed(2)}%
                   </div>
                 </div>
-                <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-                  <div className="text-sm text-gray-400 mb-1 flex items-center gap-1">
+                <div className="bg-white dark:bg-gray-900 border border-stone-200 dark:border-gray-700 rounded-lg p-4">
+                  <div className="text-sm text-stone-500 dark:text-gray-400 mb-1 flex items-center gap-1">
                     Expected Volatility
                     <InfoPopover
                       title="Portfolio Volatility"
@@ -436,12 +410,12 @@ export default function Optimizer() {
                       wikiUrl="https://en.wikipedia.org/wiki/Volatility_(finance)"
                     />
                   </div>
-                  <div className="text-2xl font-bold text-gray-100">
+                  <div className="text-2xl font-bold text-stone-900 dark:text-gray-100">
                     {(result.result.metrics.annual_volatility * 100).toFixed(2)}%
                   </div>
                 </div>
-                <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-                  <div className="text-sm text-gray-400 mb-1 flex items-center gap-1">
+                <div className="bg-white dark:bg-gray-900 border border-stone-200 dark:border-gray-700 rounded-lg p-4">
+                  <div className="text-sm text-stone-500 dark:text-gray-400 mb-1 flex items-center gap-1">
                     Sharpe Ratio
                     <InfoPopover
                       title="Sharpe Ratio"
@@ -449,7 +423,7 @@ export default function Optimizer() {
                       wikiUrl="https://en.wikipedia.org/wiki/Sharpe_ratio"
                     />
                   </div>
-                  <div className="text-2xl font-bold text-blue-400">
+                  <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
                     {result.result.metrics.sharpe_ratio.toFixed(2)}
                   </div>
                 </div>
@@ -470,13 +444,8 @@ export default function Optimizer() {
               </div>
 
               {result.narrative && (
-                <div className="order-4 bg-gray-800 rounded-lg p-6 border border-gray-700 shadow-xl mt-6">
-                  <h2 className="text-xl font-bold text-white mb-4">AI Critic Review</h2>
-                  <div className="prose prose-invert max-w-none prose-p:text-gray-300 prose-li:text-gray-300">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {result.narrative}
-                    </ReactMarkdown>
-                  </div>
+                <div className="order-4">
+                  <NarrativeBlock narrative={result.narrative} title="AI Critic Review" />
                 </div>
               )}
 
