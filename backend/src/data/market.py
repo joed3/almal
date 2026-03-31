@@ -1,0 +1,103 @@
+"""yfinance-backed market data client."""
+
+from datetime import date
+from typing import Any
+
+import yfinance as yf
+
+from src.models.market import PriceBar, PriceHistory, TickerInfo
+
+
+class MarketDataClient:
+    """Thin wrapper around yfinance for fetching market data.
+
+    All yfinance calls are routed through this class so they can be
+    easily patched in tests.
+    """
+
+    def fetch_price_history(
+        self,
+        ticker: str,
+        start: date,
+        end: date,
+    ) -> PriceHistory:
+        """Fetch OHLCV price history for a ticker between start and end dates.
+
+        Args:
+            ticker: The ticker symbol (e.g. "AAPL").
+            start: Inclusive start date.
+            end: Inclusive end date.
+
+        Returns:
+            A PriceHistory containing one PriceBar per trading day.
+        """
+        df = yf.Ticker(ticker).history(start=start, end=end)
+        bars: list[PriceBar] = []
+        for idx, row in df.iterrows():
+            bar_date = idx.date() if hasattr(idx, "date") else idx
+            bars.append(
+                PriceBar(
+                    date=bar_date,
+                    open=float(row["Open"]),
+                    high=float(row["High"]),
+                    low=float(row["Low"]),
+                    close=float(row["Close"]),
+                    volume=int(row["Volume"]),
+                )
+            )
+        return PriceHistory(
+            ticker=ticker,
+            bars=bars,
+            start_date=start,
+            end_date=end,
+        )
+
+    def fetch_ticker_info(self, ticker: str) -> TickerInfo:
+        """Fetch current quote and fundamentals for a ticker.
+
+        Args:
+            ticker: The ticker symbol (e.g. "AAPL").
+
+        Returns:
+            A TickerInfo with fields populated where available.
+        """
+        info: dict[str, Any] = yf.Ticker(ticker).info
+        return TickerInfo(
+            ticker=ticker,
+            name=info.get("longName"),
+            sector=info.get("sector"),
+            industry=info.get("industry"),
+            market_cap=info.get("marketCap"),
+            pe_ratio=info.get("trailingPE"),
+            dividend_yield=info.get("dividendYield"),
+            week_52_high=info.get("fiftyTwoWeekHigh"),
+            week_52_low=info.get("fiftyTwoWeekLow"),
+            current_price=info.get("currentPrice"),
+            currency=info.get("currency"),
+            exchange=info.get("exchange"),
+            description=info.get("longBusinessSummary"),
+        )
+
+    def search_tickers(self, query: str) -> list[dict[str, str]]:
+        """Search for tickers by name or symbol.
+
+        Args:
+            query: A free-text search string (e.g. "Apple").
+
+        Returns:
+            A list of dicts with "symbol" and "name" keys.  Returns an
+            empty list if the yfinance Search API is unavailable.
+        """
+        try:
+            quotes = yf.Search(query).quotes
+        except AttributeError:
+            return []
+        results: list[dict[str, str]] = []
+        for quote in quotes:
+            symbol = quote.get("symbol", "")
+            name = quote.get("longname") or quote.get("shortname") or ""
+            results.append({"symbol": symbol, "name": name})
+        return results
+
+
+market_client = MarketDataClient()
