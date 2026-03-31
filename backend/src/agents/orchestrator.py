@@ -77,7 +77,24 @@ class OrchestratorAgent(BaseAgent):
                 error=f"No agent registered for intent: {intent}",
             )
 
-        return await agent.run(request)
+        response = await agent.run(request)
+
+        if response.success and intent == AgentIntent.PROFILE_PORTFOLIO:
+            review_request = AgentRequest(
+                intent=intent,
+                payload={"profile_result": response.result, "context": "portfolio"},
+            )
+            review_response = await self._review_agent.run(review_request)
+            if review_response.success and review_response.narrative:
+                response = AgentResponse(
+                    intent=response.intent,
+                    success=response.success,
+                    result=response.result,
+                    narrative=review_response.narrative,
+                    error=response.error,
+                )
+
+        return response
 
     async def _classify(self, user_message: str) -> AgentIntent:
         """Use Claude to classify a natural-language message into an AgentIntent.

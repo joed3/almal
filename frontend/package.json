@@ -10,8 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@types/react-plotly.js": "^2.6.4",
+    "plotly.js": "^3.4.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-plotly.js": "^2.6.0",
     "react-router-dom": "^7.13.2"
   },
   "devDependencies": {

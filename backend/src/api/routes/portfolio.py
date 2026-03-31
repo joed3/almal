@@ -1,11 +1,34 @@
 """Portfolio API routes."""
 
-from fastapi import APIRouter, HTTPException, UploadFile
+from datetime import date
 
+from fastapi import APIRouter, HTTPException, UploadFile
+from pydantic import BaseModel
+
+from src.agents.orchestrator import OrchestratorAgent
+from src.agents.types import AgentIntent, AgentRequest, AgentResponse
 from src.data.csv_parser import parse_portfolio_csv
 from src.models.portfolio import Portfolio
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
+
+_orchestrator = OrchestratorAgent()
+
+
+class AnalyzeRequest(BaseModel):
+    """Request body for the portfolio analyze endpoint.
+
+    Attributes:
+        portfolio: The portfolio to analyze.
+        benchmark: Benchmark ticker symbol, defaults to "SPY".
+        start_date: Start of the analysis period.
+        end_date: End of the analysis period.
+    """
+
+    portfolio: Portfolio
+    benchmark: str = "SPY"
+    start_date: date
+    end_date: date
 
 
 @router.post("/upload", response_model=Portfolio)
@@ -27,3 +50,32 @@ async def upload_portfolio(file: UploadFile) -> Portfolio:
         return parse_portfolio_csv(content)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/analyze", response_model=AgentResponse)
+async def analyze_portfolio(body: AnalyzeRequest) -> AgentResponse:
+    """Profile a portfolio against a benchmark over a date range.
+
+    Args:
+        body: AnalyzeRequest containing the portfolio, benchmark ticker,
+            start_date, and end_date.
+
+    Returns:
+        AgentResponse with a ProfileResult in result and optional narrative.
+
+    Raises:
+        HTTPException: 500 if the agent pipeline returns an error.
+    """
+    agent_request = AgentRequest(
+        intent=AgentIntent.PROFILE_PORTFOLIO,
+        payload={
+            "holdings": [h.model_dump() for h in body.portfolio.holdings],
+            "benchmark": body.benchmark,
+            "start_date": body.start_date.isoformat(),
+            "end_date": body.end_date.isoformat(),
+        },
+    )
+    response = await _orchestrator.run(agent_request)
+    if not response.success and response.error:
+        raise HTTPException(status_code=500, detail=response.error)
+    return response
