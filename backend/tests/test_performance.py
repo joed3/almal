@@ -100,11 +100,9 @@ def test_compute_portfolio_series_correct_values() -> None:
 def test_compute_metrics_total_return() -> None:
     """total_return is (last / first) - 1."""
     analyzer = PortfolioAnalyzer()
-    # Start at 1.0, end at 1.5 → total_return = 0.5
     portfolio_series = _make_series([1.0, 1.1, 1.25, 1.5])
-    benchmark_series = _make_series([1.0, 1.05, 1.1, 1.15])
 
-    metrics = analyzer.compute_metrics(portfolio_series, benchmark_series)
+    metrics = analyzer.compute_metrics(portfolio_series)
 
     assert metrics.total_return == pytest.approx(0.5)
 
@@ -114,23 +112,23 @@ def test_compute_metrics_max_drawdown() -> None:
     analyzer = PortfolioAnalyzer()
     # Peak at 2.0, then drops to 1.0 → drawdown = -0.5
     portfolio_series = _make_series([1.0, 2.0, 1.0, 1.5])
-    benchmark_series = _make_series([1.0, 1.1, 1.0, 1.1])
 
-    metrics = analyzer.compute_metrics(portfolio_series, benchmark_series)
+    metrics = analyzer.compute_metrics(portfolio_series)
 
     assert metrics.max_drawdown == pytest.approx(-0.5)
 
 
 def test_compute_metrics_no_benchmark_fields() -> None:
-    """PerformanceMetrics does not expose benchmark_total_return fields."""
+    """PerformanceMetrics does not expose benchmark or alpha/beta fields."""
     analyzer = PortfolioAnalyzer()
     portfolio_series = _make_series([1.0, 1.1, 1.2])
-    benchmark_series = _make_series([1.0, 1.0, 1.3])
 
-    metrics = analyzer.compute_metrics(portfolio_series, benchmark_series)
+    metrics = analyzer.compute_metrics(portfolio_series)
 
     assert not hasattr(metrics, "benchmark_total_return")
     assert not hasattr(metrics, "benchmark_annualized_return")
+    assert not hasattr(metrics, "alpha")
+    assert not hasattr(metrics, "beta")
 
 
 # ---------------------------------------------------------------------------
@@ -141,9 +139,12 @@ def test_compute_metrics_no_benchmark_fields() -> None:
 def test_compute_benchmark_result_total_return() -> None:
     """BenchmarkResult.total_return matches the series end/start ratio."""
     analyzer = PortfolioAnalyzer()
-    series = _make_series([1.0, 1.0, 1.3])
+    benchmark_series = _make_series([1.0, 1.0, 1.3])
+    portfolio_series = _make_series([1.0, 1.1, 1.2])
 
-    result = analyzer.compute_benchmark_result("SPY", series)
+    result = analyzer.compute_benchmark_result(
+        "SPY", benchmark_series, portfolio_series
+    )
 
     assert result.ticker == "SPY"
     assert result.total_return == pytest.approx(0.3)
@@ -153,15 +154,35 @@ def test_compute_benchmark_result_total_return() -> None:
 def test_compute_benchmark_result_series_keys_are_iso_dates() -> None:
     """BenchmarkResult.series keys are ISO date strings."""
     analyzer = PortfolioAnalyzer()
-    series = _make_series([1.0, 1.05, 1.1])
+    benchmark_series = _make_series([1.0, 1.05, 1.1])
+    portfolio_series = _make_series([1.0, 1.05, 1.1])
 
-    result = analyzer.compute_benchmark_result("QQQ", series)
+    result = analyzer.compute_benchmark_result(
+        "QQQ", benchmark_series, portfolio_series
+    )
 
     for key in result.series:
-        # Must be a valid ISO date: YYYY-MM-DD
         assert len(key) == 10
         assert key[4] == "-"
         assert key[7] == "-"
+
+
+def test_compute_benchmark_result_includes_full_metrics() -> None:
+    """BenchmarkResult includes volatility, sharpe, drawdown, alpha, beta."""
+    analyzer = PortfolioAnalyzer()
+    benchmark_series = _make_series([1.0, 1.05, 1.1, 1.08, 1.12])
+    portfolio_series = _make_series([1.0, 1.06, 1.12, 1.10, 1.15])
+
+    result = analyzer.compute_benchmark_result(
+        "SPY", benchmark_series, portfolio_series
+    )
+
+    assert hasattr(result, "volatility")
+    assert hasattr(result, "sharpe_ratio")
+    assert hasattr(result, "max_drawdown")
+    assert hasattr(result, "alpha")
+    assert hasattr(result, "beta")
+    assert result.max_drawdown <= 0.0
 
 
 # ---------------------------------------------------------------------------

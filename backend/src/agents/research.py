@@ -4,7 +4,7 @@ This agent is responsible for gathering market data, news, and fundamental
 information about securities in the portfolio using external data sources.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 from anthropic import AsyncAnthropic
@@ -45,12 +45,102 @@ class ResearchAgent(BaseAgent):
             ValueError: For unexpected intents.
         """
         if request.intent == AgentIntent.INVESTIGATE_TICKER:
-            raise NotImplementedError
+            return await self._investigate_ticker(request)
 
         if request.intent != AgentIntent.PROFILE_PORTFOLIO:
             raise ValueError(f"Unsupported intent: {request.intent}")
 
         return await self._profile_portfolio(request)
+
+    async def _investigate_ticker(self, request: AgentRequest) -> AgentResponse:
+        """Run the single-ticker investigation workflow.
+
+        Args:
+            request: AgentRequest with INVESTIGATE_TICKER intent and payload
+                containing ticker, and optionally start_date/end_date and holdings.
+
+        Returns:
+            AgentResponse with ticker stats, price history, and performance metrics.
+        """
+        payload = request.payload
+        ticker = payload["ticker"]
+
+        end_date = payload.get("end_date")
+        end_date = date.fromisoformat(end_date) if end_date else date.today()
+
+        start_date = payload.get("start_date")
+        start_date = (
+            date.fromisoformat(start_date)
+            if start_date
+            else end_date - timedelta(days=365)
+        )
+
+        try:
+            info = market_client.fetch_ticker_info(ticker)
+        except Exception as exc:
+            return AgentResponse(
+                intent=request.intent,
+                success=False,
+                result={},
+                error=f"Failed to fetch ticker info for {ticker}: {exc}",
+            )
+
+        try:
+            history = market_client.fetch_price_history(ticker, start_date, end_date)
+        except Exception as exc:
+            return AgentResponse(
+                intent=request.intent,
+                success=False,
+                result={},
+                error=f"Failed to fetch price history for {ticker}: {exc}",
+            )
+
+        analyzer = PortfolioAnalyzer()
+        performance = analyzer.compute_ticker_metrics(history)
+
+        result_data = {
+            "info": info.model_dump(),
+            "history": history.model_dump(),
+            "performance": performance.model_dump(),
+            "portfolio_fit": None,
+        }
+
+        # If holdings are provided, compute portfolio fit
+        if "holdings" in payload and payload["holdings"]:
+            holdings = [Holding.model_validate(h) for h in payload["holdings"]]
+
+            # Fetch price histories for all holdings to build portfolio series
+            holding_histories: dict[str, PriceHistory] = {}
+            for h in holdings:
+                try:
+                    holding_histories[h.ticker] = market_client.fetch_price_history(
+                        h.ticker, start_date, end_date
+                    )
+                except Exception as exc:
+                    self.logger.warning(
+                        "Failed to fetch history for holding %s: %s", h.ticker, exc
+                    )
+
+            portfolio_series = analyzer.compute_portfolio_series(
+                holdings, holding_histories
+            )
+
+            if not portfolio_series.empty:
+                try:
+                    fit_result = analyzer.compute_portfolio_fit(
+                        candidate_ticker=ticker,
+                        candidate_history=history,
+                        portfolio_series=portfolio_series,
+                    )
+                    result_data["portfolio_fit"] = fit_result.model_dump()
+                except Exception as exc:
+                    self.logger.warning("Failed to compute portfolio fit: %s", exc)
+
+        return AgentResponse(
+            intent=request.intent,
+            success=True,
+            result=result_data,
+        )
 
     async def _profile_portfolio(self, request: AgentRequest) -> AgentResponse:
         """Run the portfolio profiling workflow.
@@ -146,14 +236,10 @@ class ResearchAgent(BaseAgent):
                 error="No valid price data for any of the requested benchmarks",
             )
 
-        # Primary benchmark is the first one that yielded valid data.
-        primary_ticker = next(iter(benchmark_series_map))
-        primary_series = benchmark_series_map[primary_ticker]
-
-        metrics = analyzer.compute_metrics(portfolio_series, primary_series)
+        metrics = analyzer.compute_metrics(portfolio_series)
 
         benchmark_results = [
-            analyzer.compute_benchmark_result(ticker, series)
+            analyzer.compute_benchmark_result(ticker, series, portfolio_series)
             for ticker, series in benchmark_series_map.items()
         ]
 

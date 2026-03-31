@@ -79,10 +79,16 @@ class OrchestratorAgent(BaseAgent):
 
         response = await agent.run(request)
 
-        if response.success and intent == AgentIntent.PROFILE_PORTFOLIO:
+        if response.success and intent in (
+            AgentIntent.PROFILE_PORTFOLIO,
+            AgentIntent.INVESTIGATE_TICKER,
+        ):
+            context = (
+                "portfolio" if intent == AgentIntent.PROFILE_PORTFOLIO else "investment"
+            )
             review_request = AgentRequest(
                 intent=intent,
-                payload={"profile_result": response.result, "context": "portfolio"},
+                payload={"profile_result": response.result, "context": context},
             )
             review_response = await self._review_agent.run(review_request)
             if review_response.success and review_response.narrative:

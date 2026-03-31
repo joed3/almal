@@ -123,8 +123,15 @@ async def test_research_agent_profile_portfolio() -> None:
     metrics = result["metrics"]
     assert "total_return" in metrics
     assert "sharpe_ratio" in metrics
+    assert "alpha" not in metrics
+    assert "beta" not in metrics
     assert "benchmark_total_return" not in metrics
-    assert "benchmark_annualized_return" not in metrics
+    bm = result["benchmarks"][0]
+    assert "volatility" in bm
+    assert "sharpe_ratio" in bm
+    assert "max_drawdown" in bm
+    assert "alpha" in bm
+    assert "beta" in bm
 
 
 # ---------------------------------------------------------------------------
@@ -142,14 +149,17 @@ async def test_review_agent_generates_narrative() -> None:
             "volatility": 0.20,
             "sharpe_ratio": 0.7,
             "max_drawdown": -0.08,
-            "alpha": 0.02,
-            "beta": 0.95,
         },
         "benchmarks": [
             {
                 "ticker": "SPY",
                 "total_return": 0.10,
                 "annualized_return": 0.12,
+                "volatility": 0.15,
+                "sharpe_ratio": 0.53,
+                "max_drawdown": -0.06,
+                "alpha": 0.02,
+                "beta": 0.95,
                 "series": {"2023-01-01": 1.0, "2023-01-31": 1.10},
             }
         ],
@@ -232,14 +242,17 @@ async def test_analyze_endpoint(http_client: AsyncClient) -> None:
                 "volatility": 0.18,
                 "sharpe_ratio": 0.44,
                 "max_drawdown": -0.05,
-                "alpha": 0.01,
-                "beta": 0.90,
             },
             "benchmarks": [
                 {
                     "ticker": "SPY",
                     "total_return": 0.08,
                     "annualized_return": 0.10,
+                    "volatility": 0.14,
+                    "sharpe_ratio": 0.43,
+                    "max_drawdown": -0.04,
+                    "alpha": 0.01,
+                    "beta": 0.90,
                     "series": {"2023-01-01": 1.0, "2023-01-31": 1.08},
                 }
             ],

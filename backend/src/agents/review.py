@@ -27,19 +27,38 @@ One to two sentences summarising overall performance vs the benchmark(s).
 - **[Label]:** observation with specific numbers
 (3–5 bullets)
 
-**Metrics Summary**
-A markdown table comparing the portfolio against each benchmark:
-| Metric | Portfolio | [benchmark tickers as columns...] |
-|---|---|---|
-Include rows for: Total Return, Ann. Return, Sharpe Ratio, Max Drawdown, \
-Volatility.
-Format numbers as percentages where applicable (e.g. 32.5%).
-Beta and Alpha rows are optional if relevant.
-
 **Suggestions**
 - **[Label]:** actionable suggestion
 - **[Label]:** actionable suggestion
 (2–3 bullets)
+
+Be direct and quantitative. Use the actual numbers from the data provided.\
+"""
+
+INVESTMENT_CRITIQUE_SYSTEM_PROMPT = """\
+You are an investment analyst. Given fundamental data and performance metrics \
+for a single ticker (and optionally its fit within an existing portfolio), \
+produce a structured markdown report.
+
+Your response must follow this exact structure:
+
+**Assessment**
+One to two sentences summarising the investment's profile and potential.
+
+**Key Strengths**
+- **[Label]:** specific strength with numbers
+- **[Label]:** specific strength with numbers
+(2–3 bullets)
+
+**Key Risks**
+- **[Label]:** specific risk with numbers
+- **[Label]:** specific risk with numbers
+(2–3 bullets)
+
+**Portfolio Fit (If data provided)**
+One to two sentences on how this impacts the existing portfolio (e.g., \
+correlation, volatility impact). \
+If no portfolio data is provided, omit this section.
 
 Be direct and quantitative. Use the actual numbers from the data provided.\
 """
@@ -69,16 +88,23 @@ class ReviewAgent(BaseAgent):
             An AgentResponse with narrative populated and result={}.
         """
         profile_result = request.payload.get("profile_result", {})
+        context = request.payload.get("context", "portfolio")
         settings = get_settings()
+
+        system_prompt = (
+            INVESTMENT_CRITIQUE_SYSTEM_PROMPT
+            if context == "investment"
+            else PORTFOLIO_CRITIQUE_SYSTEM_PROMPT
+        )
 
         message = await self._anthropic.messages.create(
             model=settings.default_model,
-            max_tokens=600,
-            system=PORTFOLIO_CRITIQUE_SYSTEM_PROMPT,
+            max_tokens=1500,
+            system=system_prompt,
             messages=[
                 {
                     "role": "user",
-                    "content": json.dumps(profile_result),
+                    "content": json.dumps(profile_result, default=str),
                 }
             ],
         )

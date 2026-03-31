@@ -1,5 +1,7 @@
-import { useCallback, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import _Plot from 'react-plotly.js';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import MetricCard from '../components/MetricCard';
 
 // react-plotly.js is CJS; in Vite dev the namespace object is returned instead
@@ -9,26 +11,9 @@ const Plot = (_Plot as any).default ?? _Plot;
 
 // ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
-
-interface Lot {
-  ticker: string;
-  shares: number;
-  purchase_date: string | null;
-  cost_basis: number | null;
-}
-
-interface Holding {
-  ticker: string;
-  lots: Lot[];
-  total_shares: number;
-  total_cost: number | null;
-}
-
-interface Portfolio {
-  holdings: Holding[];
-  uploaded_at: string;
-}
+import { parseCSV } from '../utils/csv';
+import { useAppContext } from '../context/AppContext';
+import type { Horizon } from '../context/AppContext';
 
 interface PerformanceMetrics {
   total_return: number;
@@ -36,10 +21,18 @@ interface PerformanceMetrics {
   volatility: number;
   sharpe_ratio: number;
   max_drawdown: number;
+}
+
+interface BenchmarkResult {
+  ticker: string;
+  total_return: number;
+  annualized_return: number;
+  volatility: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
   alpha: number;
   beta: number;
-  benchmark_total_return: number;
-  benchmark_annualized_return: number;
+  series: Record<string, number>;
 }
 
 interface HoldingWeight {
@@ -50,9 +43,9 @@ interface HoldingWeight {
 
 interface ProfileResult {
   metrics: PerformanceMetrics;
+  benchmarks: BenchmarkResult[];
   weights: HoldingWeight[];
   portfolio_series: Record<string, number>;
-  benchmark_series: Record<string, number>;
   narrative: string | null;
 }
 
@@ -68,8 +61,9 @@ interface AgentResponse {
 // Constants
 // ---------------------------------------------------------------------------
 
-const BENCHMARKS = ['SPY', 'QQQ', 'VTI', 'IWM', 'Custom…'];
-type Horizon = '1M' | '3M' | '6M' | 'YTD' | '1Y' | '3Y' | 'Max';
+const PRESET_BENCHMARKS = ['SPY', 'QQQ', 'VTI', 'IWM'];
+const BENCHMARK_COLORS = ['#a3a3a3', '#f59e0b', '#34d399', '#f87171', '#c084fc'];
+
 const HORIZONS: Horizon[] = ['1M', '3M', '6M', 'YTD', '1Y', '3Y', 'Max'];
 
 // ---------------------------------------------------------------------------
@@ -118,61 +112,52 @@ function fmt2(v: number): string {
   return v.toFixed(2);
 }
 
-// Parse CSV text into a Portfolio object (ticker, shares columns required).
-function parseCSV(text: string): Portfolio {
-  const lines = text.trim().split('\n');
-  if (lines.length < 2) throw new Error('CSV must have a header and at least one data row.');
-
-  const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
-  const tickerIdx = headers.findIndex((h) => h === 'ticker' || h === 'symbol');
-  const sharesIdx = headers.findIndex((h) => h === 'shares' || h === 'quantity');
-
-  if (tickerIdx === -1) throw new Error('CSV must have a "ticker" or "symbol" column.');
-  if (sharesIdx === -1) throw new Error('CSV must have a "shares" or "quantity" column.');
-
-  const holdingsMap: Record<string, number> = {};
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(',').map((c) => c.trim());
-    if (!cols[tickerIdx]) continue;
-    const ticker = cols[tickerIdx].toUpperCase();
-    const shares = parseFloat(cols[sharesIdx]);
-    if (isNaN(shares)) continue;
-    holdingsMap[ticker] = (holdingsMap[ticker] ?? 0) + shares;
-  }
-
-  const holdings: Holding[] = Object.entries(holdingsMap).map(([ticker, shares]) => ({
-    ticker,
-    lots: [{ ticker, shares, purchase_date: null, cost_basis: null }],
-    total_shares: shares,
-    total_cost: null,
-  }));
-
-  return {
-    holdings,
-    uploaded_at: new Date().toISOString(),
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export default function PortfolioProfiler() {
-  const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
+  const context = useAppContext();
+  const {
+    portfolio, setPortfolio,
+    profilerResult, setProfilerResult: setResult,
+    selectedBenchmarks, setSelectedBenchmarks,
+    horizon, setHorizon
+  } = context;
+
+  const result = profilerResult as ProfileResult | null;
+
   const [parseError, setParseError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  const [benchmark, setBenchmark] = useState<string>('SPY');
-  const [customBenchmark, setCustomBenchmark] = useState<string>('');
-  const [horizon, setHorizon] = useState<Horizon>('1Y');
+  // Multi-benchmark state
+  const [customInput, setCustomInput] = useState<string>('');
 
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
-  const [result, setResult] = useState<ProfileResult | null>(null);
 
   const [weightSortAsc, setWeightSortAsc] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ---- Benchmark chip helpers ----------------------------------------------
+
+  function addBenchmark(ticker: string) {
+    const upper = ticker.trim().toUpperCase();
+    if (!upper) return;
+    if (selectedBenchmarks.includes(upper)) return;
+    setSelectedBenchmarks((prev) => [...prev, upper]);
+  }
+
+  function removeBenchmark(ticker: string) {
+    if (selectedBenchmarks.length <= 1) return;
+    setSelectedBenchmarks((prev) => prev.filter((b) => b !== ticker));
+  }
+
+  function handleAddCustom() {
+    addBenchmark(customInput);
+    setCustomInput('');
+  }
 
   // ---- File handling -------------------------------------------------------
 
@@ -192,12 +177,12 @@ export default function PortfolioProfiler() {
     reader.readAsText(file);
   }
 
-  const onDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
     const file = e.dataTransfer.files[0];
     if (file) handleFile(file);
-  }, []);
+  };
 
   const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -219,9 +204,6 @@ export default function PortfolioProfiler() {
     setResult(null);
     setLoading(true);
 
-    const effectiveBenchmark =
-      benchmark === 'Custom…' ? customBenchmark.toUpperCase() : benchmark;
-
     const { start, end } = horizonDates(horizon);
 
     try {
@@ -230,7 +212,7 @@ export default function PortfolioProfiler() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           portfolio,
-          benchmark: effectiveBenchmark,
+          benchmarks: selectedBenchmarks,
           start_date: start,
           end_date: end,
         }),
@@ -263,30 +245,29 @@ export default function PortfolioProfiler() {
 
   function buildChartData(r: ProfileResult) {
     const portDates = Object.keys(r.portfolio_series).sort();
-    const benchDates = Object.keys(r.benchmark_series).sort();
 
     const portTrace: Partial<Plotly.ScatterData> = {
       type: 'scatter',
       mode: 'lines',
       name: 'Portfolio',
       x: portDates,
-      y: portDates.map((d) => ((r.portfolio_series[d] - 1) * 100)),
+      y: portDates.map((d) => (r.portfolio_series[d] - 1) * 100),
       line: { color: '#60a5fa', width: 2 },
     };
 
-    const effectiveBenchmark =
-      benchmark === 'Custom…' ? (customBenchmark || 'Benchmark') : benchmark;
+    const benchTraces: Partial<Plotly.ScatterData>[] = r.benchmarks.map((bm, i) => {
+      const bmDates = Object.keys(bm.series).sort();
+      return {
+        type: 'scatter',
+        mode: 'lines',
+        name: bm.ticker,
+        x: bmDates,
+        y: bmDates.map((d) => (bm.series[d] - 1) * 100),
+        line: { color: BENCHMARK_COLORS[i % BENCHMARK_COLORS.length], width: 2 },
+      };
+    });
 
-    const benchTrace: Partial<Plotly.ScatterData> = {
-      type: 'scatter',
-      mode: 'lines',
-      name: effectiveBenchmark,
-      x: benchDates,
-      y: benchDates.map((d) => ((r.benchmark_series[d] - 1) * 100)),
-      line: { color: '#a3a3a3', width: 2 },
-    };
-
-    return [portTrace, benchTrace];
+    return [portTrace, ...benchTraces];
   }
 
   // ---- Sorted weights ------------------------------------------------------
@@ -297,6 +278,18 @@ export default function PortfolioProfiler() {
       )
     : [];
 
+  // ---- Benchmark comparisons for metric cards ------------------------------
+
+  function bmComparisons(
+    getter: (bm: BenchmarkResult) => number,
+    formatter: (v: number) => string,
+    skipFirst = false,
+  ) {
+    if (!result) return undefined;
+    const items = skipFirst ? result.benchmarks.slice(1) : result.benchmarks;
+    return items.map((bm) => ({ ticker: bm.ticker, value: formatter(getter(bm)) }));
+  }
+
   // ---- Render --------------------------------------------------------------
 
   return (
@@ -305,7 +298,7 @@ export default function PortfolioProfiler() {
       <div>
         <h1 className="text-2xl font-semibold text-white mb-2">Portfolio Profiler</h1>
         <p className="text-gray-400">
-          Upload your holdings CSV, choose a benchmark and time horizon, then run
+          Upload your holdings CSV, choose benchmarks and a time horizon, then run
           analysis to see performance metrics and an AI-generated critique.
         </p>
       </div>
@@ -354,36 +347,74 @@ export default function PortfolioProfiler() {
 
       {/* Controls row */}
       <div className="flex flex-wrap items-end gap-4">
-        {/* Benchmark selector */}
+        {/* Multi-benchmark selector */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-gray-400 uppercase tracking-wide">Benchmark</label>
-          <select
-            value={benchmark}
-            onChange={(e) => setBenchmark(e.target.value)}
-            className="bg-gray-800 text-white border border-gray-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            {BENCHMARKS.map((b) => (
-              <option key={b} value={b}>
-                {b}
-              </option>
-            ))}
-          </select>
-        </div>
+          <label className="text-xs text-gray-400 uppercase tracking-wide">Benchmarks</label>
 
-        {benchmark === 'Custom…' && (
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-gray-400 uppercase tracking-wide">
-              Custom ticker
-            </label>
+          {/* Selected benchmark chips */}
+          <div className="flex flex-wrap gap-1 mb-1">
+            {selectedBenchmarks.map((bm) => (
+              <span
+                key={bm}
+                className="inline-flex items-center gap-1 bg-gray-700 text-white text-xs px-2 py-1 rounded-full"
+              >
+                {bm}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeBenchmark(bm);
+                  }}
+                  disabled={selectedBenchmarks.length <= 1}
+                  className="text-gray-400 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed leading-none"
+                  aria-label={`Remove ${bm}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+
+          {/* Add from presets */}
+          <div className="flex items-center gap-2">
+            <select
+              defaultValue=""
+              onChange={(e) => {
+                if (e.target.value) {
+                  addBenchmark(e.target.value);
+                  e.target.value = '';
+                }
+              }}
+              className="bg-gray-800 text-white border border-gray-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="" disabled>
+                Add preset…
+              </option>
+              {PRESET_BENCHMARKS.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
+
+            {/* Custom ticker input */}
             <input
               type="text"
-              value={customBenchmark}
-              onChange={(e) => setCustomBenchmark(e.target.value)}
-              placeholder="e.g. BRK-B"
-              className="bg-gray-800 text-white border border-gray-700 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              value={customInput}
+              onChange={(e) => setCustomInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleAddCustom();
+              }}
+              placeholder="Custom ticker"
+              className="bg-gray-800 text-white border border-gray-700 rounded-md px-3 py-2 text-sm w-28 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
+            <button
+              onClick={handleAddCustom}
+              className="px-3 py-2 rounded-md bg-gray-700 text-white text-sm hover:bg-gray-600 transition-colors"
+            >
+              Add
+            </button>
           </div>
-        )}
+        </div>
 
         {/* Horizon toggle */}
         <div className="flex flex-col gap-1">
@@ -432,36 +463,59 @@ export default function PortfolioProfiler() {
               label="Total Return"
               value={pct(result.metrics.total_return)}
               positive={result.metrics.total_return >= 0}
+              benchmarks={bmComparisons((bm) => bm.total_return, pct)}
+              description="The overall gain or loss of the portfolio over the selected period, expressed as a percentage."
+              wikiUrl="https://en.wikipedia.org/wiki/Rate_of_return"
             />
             <MetricCard
               label="Ann. Return"
               value={pct(result.metrics.annualized_return)}
               positive={result.metrics.annualized_return >= 0}
+              benchmarks={bmComparisons((bm) => bm.annualized_return, pct)}
+              description="Total return scaled to a one-year rate, enabling fair comparison across different time periods."
+              wikiUrl="https://en.wikipedia.org/wiki/Compound_annual_growth_rate"
             />
             <MetricCard
               label="Volatility"
               value={pct(result.metrics.volatility)}
               positive={null}
+              benchmarks={bmComparisons((bm) => bm.volatility, pct)}
+              description="Annualised standard deviation of daily returns — measures how much the portfolio value fluctuates."
+              wikiUrl="https://en.wikipedia.org/wiki/Volatility_(finance)"
             />
             <MetricCard
               label="Sharpe Ratio"
               value={fmt2(result.metrics.sharpe_ratio)}
               positive={result.metrics.sharpe_ratio >= 0}
+              benchmarks={bmComparisons((bm) => bm.sharpe_ratio, fmt2)}
+              description="Risk-adjusted return: excess return per unit of volatility. Higher values indicate better risk-adjusted performance."
+              wikiUrl="https://en.wikipedia.org/wiki/Sharpe_ratio"
             />
             <MetricCard
               label="Max Drawdown"
               value={pct(result.metrics.max_drawdown)}
               positive={result.metrics.max_drawdown >= 0}
+              benchmarks={bmComparisons((bm) => bm.max_drawdown, pct)}
+              description="The largest peak-to-trough decline over the period. A measure of downside risk."
+              wikiUrl="https://en.wikipedia.org/wiki/Drawdown_(economics)"
             />
             <MetricCard
               label="Alpha"
-              value={pct(result.metrics.alpha)}
-              positive={result.metrics.alpha >= 0}
+              value={result.benchmarks[0] ? pct(result.benchmarks[0].alpha) : 'N/A'}
+              positive={result.benchmarks[0] ? result.benchmarks[0].alpha >= 0 : null}
+              sublabel={result.benchmarks[0] ? `vs ${result.benchmarks[0].ticker}` : undefined}
+              benchmarks={bmComparisons((bm) => bm.alpha, pct, true)}
+              description="Excess return relative to the benchmark after adjusting for market risk. Positive alpha means outperformance."
+              wikiUrl="https://en.wikipedia.org/wiki/Alpha_(finance)"
             />
             <MetricCard
               label="Beta"
-              value={fmt2(result.metrics.beta)}
+              value={result.benchmarks[0] ? fmt2(result.benchmarks[0].beta) : 'N/A'}
               positive={null}
+              sublabel={result.benchmarks[0] ? `vs ${result.benchmarks[0].ticker}` : undefined}
+              benchmarks={bmComparisons((bm) => bm.beta, fmt2, true)}
+              description="Sensitivity of the portfolio to benchmark movements. Beta > 1 means more volatile than the benchmark."
+              wikiUrl="https://en.wikipedia.org/wiki/Beta_(finance)"
             />
           </div>
 
@@ -541,10 +595,59 @@ export default function PortfolioProfiler() {
           {/* Review narrative */}
           {result.narrative && (
             <div className="bg-slate-800 border border-slate-700 rounded-lg p-5">
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">
                 AI Analysis
               </p>
-              <p className="text-slate-200 leading-relaxed">{result.narrative}</p>
+              <div className="prose-sm">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    h2: ({ children }) => (
+                      <h2 className="font-semibold text-slate-100">{children}</h2>
+                    ),
+                    h3: ({ children }) => (
+                      <h3 className="font-semibold text-slate-100">{children}</h3>
+                    ),
+                    strong: ({ children }) => (
+                      <strong className="font-semibold text-slate-100">{children}</strong>
+                    ),
+                    ul: ({ children }) => (
+                      <ul className="list-disc list-inside space-y-1">{children}</ul>
+                    ),
+                    li: ({ children }) => (
+                      <li className="text-slate-300">{children}</li>
+                    ),
+                    p: ({ children }) => (
+                      <p className="text-slate-200">{children}</p>
+                    ),
+                    a: ({ href, children }) => (
+                      <a
+                        href={href}
+                        className="text-blue-400 hover:underline"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {children}
+                      </a>
+                    ),
+                    table: ({ children }) => (
+                      <table className="w-full text-sm border-collapse mt-2">{children}</table>
+                    ),
+                    th: ({ children }) => (
+                      <th className="text-left px-3 py-2 text-slate-400 border-b border-slate-600 font-medium">
+                        {children}
+                      </th>
+                    ),
+                    td: ({ children }) => (
+                      <td className="px-3 py-2 text-slate-300 border-b border-slate-700">
+                        {children}
+                      </td>
+                    ),
+                  }}
+                >
+                  {result.narrative}
+                </ReactMarkdown>
+              </div>
             </div>
           )}
         </div>
