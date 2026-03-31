@@ -89,13 +89,23 @@ The profiler shows cumulative return vs the benchmark, key performance metrics
 (total return, Sharpe ratio, max drawdown, alpha, beta), a holdings weight breakdown,
 and an AI-generated critique from the Review Agent.
 
-### Investment Investigator *(coming soon)*
+### Investment Investigator
 
 Research a stock or ETF by ticker and see how it would fit an existing portfolio.
 
-### Portfolio Optimizer *(coming soon)*
+1. Navigate to **Investigator** in the sidebar.
+2. Search for any public company (e.g. "Apple" or "MSFT") using the predictive autocomplete field.
+3. Review the AI-generated fundamental thesis and view quantitative price histories.
+4. Drag and drop your `.csv` into the Portfolio Context box to visualize exact percentage matches.
+
+### Portfolio Optimizer
 
 Generate an optimized allocation given a set of candidate tickers and a principal amount.
+
+1. Navigate to **Optimizer** in the sidebar.
+2. Provide an array of candidate investments or drag and drop your existing `.csv` into the dropzone to inherit context.
+3. Select an objective Strategy (Conservative Min Volatility, Balanced Max Sharpe, or Aggressive Max Return).
+4. Enter an investable Principal Amount and generate your exact trade instructions alongside an Efficient Frontier locus.
 
 ## Example data
 

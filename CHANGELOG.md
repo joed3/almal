@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-03-31
+
+### Added
+- **Investment Investigator:** Fully functional single-asset research dashboard with live interactive metrics, autocomplete indexing, price history trend charts, and a portfolio fit matrix simulation.
+- **Portfolio Optimizer:** Fully functional optimization sweep engine incorporating PyPortfolioOpt bounds, discrete allocation mapping, realtime efficient frontier charting, and inline portfolio context tracking.
+- **Agent Intelligence:** Implemented unmocked Anthropic-driven ReviewAgent critiques for both singular investments and optimized allocations.
+
 ## [0.1.0] - Unreleased
 
 ### Added
