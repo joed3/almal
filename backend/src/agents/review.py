@@ -5,22 +5,25 @@ for consistency, risk, and alignment with the user's investment objectives befor
 surfacing recommendations.
 """
 
+from src.agents.base import BaseAgent
+from src.agents.types import AgentRequest, AgentResponse
 
-class ReviewAgent:
-    """Critically evaluates agent outputs and validates portfolio recommendations.
 
-    Attributes:
-        None at this stage — populated in later stages.
-    """
+class ReviewAgent(BaseAgent):
+    """Critiques portfolio proposals and investment ideas using Claude."""
 
     def __init__(self) -> None:
-        """Initialize the ReviewAgent."""
+        """Initialise the ReviewAgent."""
+        super().__init__("review")
 
-    async def run(self) -> None:
+    async def _execute(self, request: AgentRequest) -> AgentResponse:
         """Execute the review workflow.
 
+        Args:
+            request: The structured request to process.
+
         Returns:
-            None
+            An AgentResponse with review results.
 
         Raises:
             NotImplementedError: This method is not yet implemented.
