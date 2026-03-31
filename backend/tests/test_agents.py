@@ -9,6 +9,7 @@ from src.agents.base import BaseAgent
 from src.agents.optimizer import OptimizerAgent
 from src.agents.orchestrator import OrchestratorAgent
 from src.agents.research import ResearchAgent
+from src.agents.review import ReviewAgent
 from src.agents.types import AgentIntent, AgentRequest, AgentResponse
 from src.api.main import app
 
@@ -44,8 +45,12 @@ async def test_orchestrator_routes_investigate_ticker() -> None:
     request = _make_request(AgentIntent.INVESTIGATE_TICKER)
     expected = _success_response(AgentIntent.INVESTIGATE_TICKER)
 
-    with patch.object(ResearchAgent, "_execute", new_callable=AsyncMock) as mock_exec:
+    with (
+        patch.object(ResearchAgent, "_execute", new_callable=AsyncMock) as mock_exec,
+        patch.object(ReviewAgent, "_execute", new_callable=AsyncMock) as mock_review,
+    ):
         mock_exec.return_value = expected
+        mock_review.return_value = _success_response(AgentIntent.INVESTIGATE_TICKER)
         orchestrator = OrchestratorAgent()
         response = await orchestrator.run(request)
 
@@ -60,8 +65,12 @@ async def test_orchestrator_routes_optimize_portfolio() -> None:
     request = _make_request(AgentIntent.OPTIMIZE_PORTFOLIO)
     expected = _success_response(AgentIntent.OPTIMIZE_PORTFOLIO)
 
-    with patch.object(OptimizerAgent, "_execute", new_callable=AsyncMock) as mock_exec:
+    with (
+        patch.object(OptimizerAgent, "_execute", new_callable=AsyncMock) as mock_exec,
+        patch.object(ReviewAgent, "_execute", new_callable=AsyncMock) as mock_review,
+    ):
         mock_exec.return_value = expected
+        mock_review.return_value = _success_response(AgentIntent.OPTIMIZE_PORTFOLIO)
         orchestrator = OrchestratorAgent()
         response = await orchestrator.run(request)
 
@@ -76,8 +85,12 @@ async def test_orchestrator_routes_profile_portfolio() -> None:
     request = _make_request(AgentIntent.PROFILE_PORTFOLIO)
     expected = _success_response(AgentIntent.PROFILE_PORTFOLIO)
 
-    with patch.object(ResearchAgent, "_execute", new_callable=AsyncMock) as mock_exec:
+    with (
+        patch.object(ResearchAgent, "_execute", new_callable=AsyncMock) as mock_exec,
+        patch.object(ReviewAgent, "_execute", new_callable=AsyncMock) as mock_review,
+    ):
         mock_exec.return_value = expected
+        mock_review.return_value = _success_response(AgentIntent.PROFILE_PORTFOLIO)
         orchestrator = OrchestratorAgent()
         response = await orchestrator.run(request)
 
@@ -113,11 +126,13 @@ async def test_orchestrator_classifies_nl_investigate() -> None:
     with (
         patch("src.agents.orchestrator.AsyncAnthropic") as mock_anthropic_cls,
         patch.object(ResearchAgent, "_execute", new_callable=AsyncMock) as mock_exec,
+        patch.object(ReviewAgent, "_execute", new_callable=AsyncMock) as mock_review,
     ):
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=mock_message)
         mock_anthropic_cls.return_value = mock_client
         mock_exec.return_value = expected
+        mock_review.return_value = _success_response(AgentIntent.INVESTIGATE_TICKER)
 
         orchestrator = OrchestratorAgent()
         response = await orchestrator.run(request)

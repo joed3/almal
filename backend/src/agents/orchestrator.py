@@ -82,10 +82,14 @@ class OrchestratorAgent(BaseAgent):
         if response.success and intent in (
             AgentIntent.PROFILE_PORTFOLIO,
             AgentIntent.INVESTIGATE_TICKER,
+            AgentIntent.OPTIMIZE_PORTFOLIO,
         ):
-            context = (
-                "portfolio" if intent == AgentIntent.PROFILE_PORTFOLIO else "investment"
-            )
+            if intent == AgentIntent.PROFILE_PORTFOLIO:
+                context = "portfolio"
+            elif intent == AgentIntent.INVESTIGATE_TICKER:
+                context = "investment"
+            else:
+                context = "optimization"
             review_request = AgentRequest(
                 intent=intent,
                 payload={"profile_result": response.result, "context": context},

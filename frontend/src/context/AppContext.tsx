@@ -8,6 +8,7 @@ import type { Portfolio } from '../utils/csv';
 // For simplicity, we use any for complex results to avoid circular imports
 // if we don't want to extract all types immediately.
 export type Horizon = '1M' | '3M' | '6M' | 'YTD' | '1Y' | '3Y' | 'Max';
+export type OptimizationStrategy = 'min_volatility' | 'max_sharpe' | 'max_return' | 'regularized_sharpe';
 
 interface AppContextType {
   // Global Shared State
@@ -31,6 +32,20 @@ interface AppContextType {
   setInvestigatorResult: React.Dispatch<React.SetStateAction<any | null>>;
   investigatorNarrative: string | null;
   setInvestigatorNarrative: React.Dispatch<React.SetStateAction<string | null>>;
+
+  // Optimizer Persistence
+  optimizerCandidates: string[];
+  setOptimizerCandidates: React.Dispatch<React.SetStateAction<string[]>>;
+  optimizerTickerInput: string;
+  setOptimizerTickerInput: React.Dispatch<React.SetStateAction<string>>;
+  optimizerPrincipal: number;
+  setOptimizerPrincipal: React.Dispatch<React.SetStateAction<number>>;
+  optimizerStrategy: OptimizationStrategy;
+  setOptimizerStrategy: React.Dispatch<React.SetStateAction<OptimizationStrategy>>;
+  optimizerRebalanceMode: boolean;
+  setOptimizerRebalanceMode: React.Dispatch<React.SetStateAction<boolean>>;
+  optimizerResult: any | null;
+  setOptimizerResult: React.Dispatch<React.SetStateAction<any | null>>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -48,6 +63,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [investigatorResult, setInvestigatorResult] = useState<any | null>(null);
   const [investigatorNarrative, setInvestigatorNarrative] = useState<string | null>(null);
+
+  // Optimizer state
+  const [optimizerCandidates, setOptimizerCandidates] = useState<string[]>([]);
+  const [optimizerTickerInput, setOptimizerTickerInput] = useState('');
+  const [optimizerPrincipal, setOptimizerPrincipal] = useState<number>(100000);
+  const [optimizerStrategy, setOptimizerStrategy] = useState<OptimizationStrategy>('max_sharpe');
+  const [optimizerRebalanceMode, setOptimizerRebalanceMode] = useState<boolean>(false);
+  const [optimizerResult, setOptimizerResult] = useState<any | null>(null);
 
   return (
     <AppContext.Provider
@@ -70,6 +93,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setInvestigatorResult,
         investigatorNarrative,
         setInvestigatorNarrative,
+
+        optimizerCandidates,
+        setOptimizerCandidates,
+        optimizerTickerInput,
+        setOptimizerTickerInput,
+        optimizerPrincipal,
+        setOptimizerPrincipal,
+        optimizerStrategy,
+        setOptimizerStrategy,
+        optimizerRebalanceMode,
+        setOptimizerRebalanceMode,
+        optimizerResult,
+        setOptimizerResult,
       }}
     >
       {children}

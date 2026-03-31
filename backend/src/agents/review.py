@@ -63,6 +63,29 @@ If no portfolio data is provided, omit this section.
 Be direct and quantitative. Use the actual numbers from the data provided.\
 """
 
+OPTIMIZATION_CRITIQUE_SYSTEM_PROMPT = """\
+You are a quantitative portfolio manager acting as a critic. Given an \
+optimized portfolio allocation and its efficient frontier metrics, \
+produce a structured markdown report.
+
+Your response must follow this exact structure:
+
+**Assessment**
+One to two sentences summarising the proposed allocation's risk and return profile.
+
+**Key Strengths**
+- **[Label]:** specific strength about the allocation
+- **[Label]:** specific strength
+(2–3 bullets)
+
+**Concentration & Risks**
+- **[Label]:** note any heavy concentrations or theoretical risks in the model
+- **[Label]:** specific risk
+(2–3 bullets)
+
+Be direct and quantitative. Use the actual numbers from the allocation.\
+"""
+
 
 class ReviewAgent(BaseAgent):
     """Critiques portfolio proposals and investment ideas using Claude."""
@@ -91,11 +114,12 @@ class ReviewAgent(BaseAgent):
         context = request.payload.get("context", "portfolio")
         settings = get_settings()
 
-        system_prompt = (
-            INVESTMENT_CRITIQUE_SYSTEM_PROMPT
-            if context == "investment"
-            else PORTFOLIO_CRITIQUE_SYSTEM_PROMPT
-        )
+        if context == "investment":
+            system_prompt = INVESTMENT_CRITIQUE_SYSTEM_PROMPT
+        elif context == "optimization":
+            system_prompt = OPTIMIZATION_CRITIQUE_SYSTEM_PROMPT
+        else:
+            system_prompt = PORTFOLIO_CRITIQUE_SYSTEM_PROMPT
 
         message = await self._anthropic.messages.create(
             model=settings.default_model,
