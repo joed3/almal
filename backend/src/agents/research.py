@@ -6,6 +6,7 @@ information about securities in the portfolio using external data sources.
 
 from datetime import date
 
+import pandas as pd
 from anthropic import AsyncAnthropic
 
 from src.agents.base import BaseAgent
@@ -56,19 +57,19 @@ class ResearchAgent(BaseAgent):
 
         Args:
             request: AgentRequest with PROFILE_PORTFOLIO intent and payload
-                containing holdings, benchmark, start_date, and end_date.
+                containing holdings, benchmarks, start_date, and end_date.
 
         Returns:
             AgentResponse with a serialised ProfileResult in result.
         """
         payload = request.payload
         holdings = [Holding.model_validate(h) for h in payload["holdings"]]
-        benchmark: str = payload["benchmark"]
+        benchmarks: list[str] = payload["benchmarks"]
         start_date = date.fromisoformat(payload["start_date"])
         end_date = date.fromisoformat(payload["end_date"])
 
-        # Fetch price histories for each holding + benchmark.
-        all_tickers = [h.ticker for h in holdings] + [benchmark]
+        # Fetch price histories for each holding + all benchmarks.
+        all_tickers = [h.ticker for h in holdings] + benchmarks
         price_histories: dict[str, PriceHistory] = {}
         for ticker in all_tickers:
             try:
@@ -100,40 +101,13 @@ class ResearchAgent(BaseAgent):
         holding_histories = {
             ticker: hist
             for ticker, hist in price_histories.items()
-            if ticker != benchmark
+            if ticker not in benchmarks
         }
 
         analyzer = PortfolioAnalyzer()
         portfolio_series = analyzer.compute_portfolio_series(
             available_holdings, holding_histories
         )
-
-        benchmark_history = price_histories.get(benchmark)
-        if benchmark_history is None or benchmark_history.bars == []:
-            return AgentResponse(
-                intent=request.intent,
-                success=False,
-                result={},
-                error=f"No price data available for benchmark {benchmark}",
-            )
-
-        import pandas as pd
-
-        bench_dates = [bar.date for bar in benchmark_history.bars]
-        bench_closes = [bar.close for bar in benchmark_history.bars]
-        benchmark_series_raw = pd.Series(
-            bench_closes,
-            index=pd.DatetimeIndex(bench_dates),
-        )
-        benchmark_series_raw = benchmark_series_raw.ffill(limit=5).dropna()
-        if benchmark_series_raw.empty or benchmark_series_raw.iloc[0] == 0:
-            return AgentResponse(
-                intent=request.intent,
-                success=False,
-                result={},
-                error=f"Benchmark {benchmark} has empty price data",
-            )
-        benchmark_series = benchmark_series_raw / benchmark_series_raw.iloc[0]
 
         if portfolio_series.empty:
             return AgentResponse(
@@ -143,17 +117,54 @@ class ResearchAgent(BaseAgent):
                 error="No valid portfolio price data for the given period",
             )
 
-        metrics = analyzer.compute_metrics(portfolio_series, benchmark_series)
+        # Build a normalised pd.Series for each benchmark.
+        benchmark_series_map: dict[str, pd.Series] = {}
+        for bm_ticker in benchmarks:
+            bm_history = price_histories.get(bm_ticker)
+            if bm_history is None or bm_history.bars == []:
+                self.logger.warning(
+                    "No price data available for benchmark %s", bm_ticker
+                )
+                continue
+            bm_dates = [bar.date for bar in bm_history.bars]
+            bm_closes = [bar.close for bar in bm_history.bars]
+            bm_raw = pd.Series(
+                bm_closes,
+                index=pd.DatetimeIndex(bm_dates),
+            )
+            bm_raw = bm_raw.ffill(limit=5).dropna()
+            if bm_raw.empty or bm_raw.iloc[0] == 0:
+                self.logger.warning("Benchmark %s has empty price data", bm_ticker)
+                continue
+            benchmark_series_map[bm_ticker] = bm_raw / bm_raw.iloc[0]
+
+        if not benchmark_series_map:
+            return AgentResponse(
+                intent=request.intent,
+                success=False,
+                result={},
+                error="No valid price data for any of the requested benchmarks",
+            )
+
+        # Primary benchmark is the first one that yielded valid data.
+        primary_ticker = next(iter(benchmark_series_map))
+        primary_series = benchmark_series_map[primary_ticker]
+
+        metrics = analyzer.compute_metrics(portfolio_series, primary_series)
+
+        benchmark_results = [
+            analyzer.compute_benchmark_result(ticker, series)
+            for ticker, series in benchmark_series_map.items()
+        ]
+
         weights = analyzer.compute_holding_weights(holdings, latest_prices)
 
         profile = ProfileResult(
             metrics=metrics,
+            benchmarks=benchmark_results,
             weights=weights,
             portfolio_series={
                 str(idx.date()): float(val) for idx, val in portfolio_series.items()
-            },
-            benchmark_series={
-                str(idx.date()): float(val) for idx, val in benchmark_series.items()
             },
         )
 

@@ -121,15 +121,47 @@ def test_compute_metrics_max_drawdown() -> None:
     assert metrics.max_drawdown == pytest.approx(-0.5)
 
 
-def test_compute_metrics_benchmark_total_return() -> None:
-    """benchmark_total_return is computed independently from portfolio."""
+def test_compute_metrics_no_benchmark_fields() -> None:
+    """PerformanceMetrics does not expose benchmark_total_return fields."""
     analyzer = PortfolioAnalyzer()
     portfolio_series = _make_series([1.0, 1.1, 1.2])
     benchmark_series = _make_series([1.0, 1.0, 1.3])
 
     metrics = analyzer.compute_metrics(portfolio_series, benchmark_series)
 
-    assert metrics.benchmark_total_return == pytest.approx(0.3)
+    assert not hasattr(metrics, "benchmark_total_return")
+    assert not hasattr(metrics, "benchmark_annualized_return")
+
+
+# ---------------------------------------------------------------------------
+# compute_benchmark_result
+# ---------------------------------------------------------------------------
+
+
+def test_compute_benchmark_result_total_return() -> None:
+    """BenchmarkResult.total_return matches the series end/start ratio."""
+    analyzer = PortfolioAnalyzer()
+    series = _make_series([1.0, 1.0, 1.3])
+
+    result = analyzer.compute_benchmark_result("SPY", series)
+
+    assert result.ticker == "SPY"
+    assert result.total_return == pytest.approx(0.3)
+    assert len(result.series) == 3
+
+
+def test_compute_benchmark_result_series_keys_are_iso_dates() -> None:
+    """BenchmarkResult.series keys are ISO date strings."""
+    analyzer = PortfolioAnalyzer()
+    series = _make_series([1.0, 1.05, 1.1])
+
+    result = analyzer.compute_benchmark_result("QQQ", series)
+
+    for key in result.series:
+        # Must be a valid ISO date: YYYY-MM-DD
+        assert len(key) == 10
+        assert key[4] == "-"
+        assert key[7] == "-"
 
 
 # ---------------------------------------------------------------------------

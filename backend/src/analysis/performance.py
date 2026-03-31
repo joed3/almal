@@ -22,10 +22,8 @@ class PerformanceMetrics(BaseModel):
         volatility: Annualised standard deviation of daily returns.
         sharpe_ratio: Risk-adjusted return above the risk-free rate.
         max_drawdown: Worst peak-to-trough drawdown, e.g. -0.15 = -15%.
-        alpha: Excess return vs CAPM prediction.
-        beta: Sensitivity to benchmark movements.
-        benchmark_total_return: Benchmark cumulative return.
-        benchmark_annualized_return: Benchmark CAGR.
+        alpha: Excess return vs CAPM prediction (vs primary benchmark).
+        beta: Sensitivity to benchmark movements (vs primary benchmark).
     """
 
     total_return: float
@@ -35,8 +33,22 @@ class PerformanceMetrics(BaseModel):
     max_drawdown: float
     alpha: float
     beta: float
-    benchmark_total_return: float
-    benchmark_annualized_return: float
+
+
+class BenchmarkResult(BaseModel):
+    """Metrics and normalised price series for a single benchmark.
+
+    Attributes:
+        ticker: The benchmark ticker symbol.
+        total_return: Cumulative return over the period.
+        annualized_return: CAGR over the observed period.
+        series: ISO date → normalised value starting at 1.0.
+    """
+
+    ticker: str
+    total_return: float
+    annualized_return: float
+    series: dict[str, float]
 
 
 class HoldingWeight(BaseModel):
@@ -58,16 +70,16 @@ class ProfileResult(BaseModel):
 
     Attributes:
         metrics: Computed performance statistics.
+        benchmarks: One BenchmarkResult per benchmark requested.
         weights: Per-holding market-value weights.
         portfolio_series: ISO date → normalised portfolio value.
-        benchmark_series: ISO date → normalised benchmark value.
         narrative: Optional natural-language critique from the Review Agent.
     """
 
     metrics: PerformanceMetrics
+    benchmarks: list[BenchmarkResult]
     weights: list[HoldingWeight]
     portfolio_series: dict[str, float]
-    benchmark_series: dict[str, float]
     narrative: str | None = None
 
 
@@ -125,14 +137,14 @@ class PortfolioAnalyzer:
     def compute_metrics(
         self,
         portfolio_series: pd.Series,
-        benchmark_series: pd.Series,
+        primary_benchmark_series: pd.Series,
         risk_free_rate: float = 0.04,
     ) -> PerformanceMetrics:
-        """Compute performance metrics for a portfolio vs a benchmark.
+        """Compute performance metrics for a portfolio vs a primary benchmark.
 
         Args:
             portfolio_series: Normalised daily portfolio value series.
-            benchmark_series: Normalised daily benchmark value series.
+            primary_benchmark_series: Normalised daily primary benchmark series.
             risk_free_rate: Annualised risk-free rate, default 4%.
 
         Returns:
@@ -154,14 +166,15 @@ class PortfolioAnalyzer:
         max_drawdown = float(drawdown.min())
 
         benchmark_total_return = (
-            float(benchmark_series.iloc[-1] / benchmark_series.iloc[0]) - 1.0
+            float(primary_benchmark_series.iloc[-1] / primary_benchmark_series.iloc[0])
+            - 1.0
         )
-        n_bench = len(benchmark_series)
+        n_bench = len(primary_benchmark_series)
         benchmark_annualized_return = (
             float((1 + benchmark_total_return) ** (252 / n_bench)) - 1.0
         )
 
-        benchmark_returns = benchmark_series.pct_change().dropna()
+        benchmark_returns = primary_benchmark_series.pct_change().dropna()
 
         # Align both return series on common dates.
         aligned_port, aligned_bench = daily_returns.align(
@@ -185,8 +198,32 @@ class PortfolioAnalyzer:
             max_drawdown=max_drawdown,
             alpha=alpha,
             beta=beta,
-            benchmark_total_return=benchmark_total_return,
-            benchmark_annualized_return=benchmark_annualized_return,
+        )
+
+    def compute_benchmark_result(
+        self,
+        ticker: str,
+        benchmark_series: pd.Series,
+    ) -> BenchmarkResult:
+        """Compute metrics and normalised series for a single benchmark.
+
+        Args:
+            ticker: The benchmark ticker symbol.
+            benchmark_series: Normalised daily benchmark value series
+                (starting at 1.0).
+
+        Returns:
+            BenchmarkResult with total_return, annualized_return, and series.
+        """
+        total_return = float(benchmark_series.iloc[-1] / benchmark_series.iloc[0]) - 1.0
+        n_days = len(benchmark_series)
+        annualized_return = float((1 + total_return) ** (252 / n_days)) - 1.0
+        series = {str(idx.date()): float(val) for idx, val in benchmark_series.items()}
+        return BenchmarkResult(
+            ticker=ticker,
+            total_return=total_return,
+            annualized_return=annualized_return,
+            series=series,
         )
 
     def compute_holding_weights(

@@ -55,15 +55,17 @@ def _make_ticker_info(ticker: str, price: float) -> TickerInfo:
 
 def _build_profile_request(
     holdings: list[Holding] | None = None,
-    benchmark: str = "SPY",
+    benchmarks: list[str] | None = None,
 ) -> AgentRequest:
     if holdings is None:
         holdings = [_make_holding("AAPL", 10.0), _make_holding("MSFT", 5.0)]
+    if benchmarks is None:
+        benchmarks = ["SPY"]
     return AgentRequest(
         intent=AgentIntent.PROFILE_PORTFOLIO,
         payload={
             "holdings": [h.model_dump() for h in holdings],
-            "benchmark": benchmark,
+            "benchmarks": benchmarks,
             "start_date": "2023-01-01",
             "end_date": "2023-01-31",
         },
@@ -115,10 +117,14 @@ async def test_research_agent_profile_portfolio() -> None:
     assert "metrics" in result
     assert "weights" in result
     assert "portfolio_series" in result
-    assert "benchmark_series" in result
+    assert "benchmarks" in result
+    assert len(result["benchmarks"]) == 1
+    assert result["benchmarks"][0]["ticker"] == "SPY"
     metrics = result["metrics"]
     assert "total_return" in metrics
     assert "sharpe_ratio" in metrics
+    assert "benchmark_total_return" not in metrics
+    assert "benchmark_annualized_return" not in metrics
 
 
 # ---------------------------------------------------------------------------
@@ -138,15 +144,20 @@ async def test_review_agent_generates_narrative() -> None:
             "max_drawdown": -0.08,
             "alpha": 0.02,
             "beta": 0.95,
-            "benchmark_total_return": 0.10,
-            "benchmark_annualized_return": 0.12,
         },
+        "benchmarks": [
+            {
+                "ticker": "SPY",
+                "total_return": 0.10,
+                "annualized_return": 0.12,
+                "series": {"2023-01-01": 1.0, "2023-01-31": 1.10},
+            }
+        ],
         "weights": [
             {"ticker": "AAPL", "market_value": 1500.0, "weight": 0.6},
             {"ticker": "MSFT", "market_value": 1000.0, "weight": 0.4},
         ],
         "portfolio_series": {"2023-01-01": 1.0, "2023-01-31": 1.15},
-        "benchmark_series": {"2023-01-01": 1.0, "2023-01-31": 1.10},
     }
 
     request = AgentRequest(
@@ -156,10 +167,17 @@ async def test_review_agent_generates_narrative() -> None:
 
     mock_content = MagicMock()
     mock_content.text = (
+        "**Assessment**\n"
         "The portfolio returned 15% versus the benchmark's 10%, "
-        "outperforming by 5 percentage points. AAPL represents 60% of the "
-        "portfolio, posing significant concentration risk. Consider diversifying "
-        "by reducing AAPL exposure and adding uncorrelated assets."
+        "outperforming by 5 percentage points.\n\n"
+        "**Key Observations**\n"
+        "- **Concentration:** AAPL represents 60% of the portfolio.\n\n"
+        "**Metrics Summary**\n"
+        "| Metric | Portfolio | SPY |\n"
+        "|---|---|---|\n"
+        "| Total Return | 15.0% | 10.0% |\n\n"
+        "**Suggestions**\n"
+        "- **Diversify:** Reduce AAPL exposure."
     )
     mock_message = MagicMock()
     mock_message.content = [mock_content]
@@ -216,15 +234,20 @@ async def test_analyze_endpoint(http_client: AsyncClient) -> None:
                 "max_drawdown": -0.05,
                 "alpha": 0.01,
                 "beta": 0.90,
-                "benchmark_total_return": 0.08,
-                "benchmark_annualized_return": 0.10,
             },
+            "benchmarks": [
+                {
+                    "ticker": "SPY",
+                    "total_return": 0.08,
+                    "annualized_return": 0.10,
+                    "series": {"2023-01-01": 1.0, "2023-01-31": 1.08},
+                }
+            ],
             "weights": [
                 {"ticker": "AAPL", "market_value": 1500.0, "weight": 0.75},
                 {"ticker": "MSFT", "market_value": 500.0, "weight": 0.25},
             ],
             "portfolio_series": {"2023-01-01": 1.0, "2023-01-31": 1.10},
-            "benchmark_series": {"2023-01-01": 1.0, "2023-01-31": 1.08},
         },
         narrative="Good performance overall.",
     )
@@ -238,7 +261,7 @@ async def test_analyze_endpoint(http_client: AsyncClient) -> None:
             "/portfolio/analyze",
             json={
                 "portfolio": portfolio.model_dump(mode="json"),
-                "benchmark": "SPY",
+                "benchmarks": ["SPY"],
                 "start_date": "2023-01-01",
                 "end_date": "2023-01-31",
             },

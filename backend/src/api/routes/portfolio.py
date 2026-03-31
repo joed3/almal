@@ -20,13 +20,13 @@ class AnalyzeRequest(BaseModel):
 
     Attributes:
         portfolio: The portfolio to analyze.
-        benchmark: Benchmark ticker symbol, defaults to "SPY".
+        benchmarks: List of benchmark ticker symbols, defaults to ["SPY"].
         start_date: Start of the analysis period.
         end_date: End of the analysis period.
     """
 
     portfolio: Portfolio
-    benchmark: str = "SPY"
+    benchmarks: list[str] = ["SPY"]
     start_date: date
     end_date: date
 
@@ -54,10 +54,10 @@ async def upload_portfolio(file: UploadFile) -> Portfolio:
 
 @router.post("/analyze", response_model=AgentResponse)
 async def analyze_portfolio(body: AnalyzeRequest) -> AgentResponse:
-    """Profile a portfolio against a benchmark over a date range.
+    """Profile a portfolio against benchmarks over a date range.
 
     Args:
-        body: AnalyzeRequest containing the portfolio, benchmark ticker,
+        body: AnalyzeRequest containing the portfolio, benchmark tickers,
             start_date, and end_date.
 
     Returns:
@@ -70,7 +70,7 @@ async def analyze_portfolio(body: AnalyzeRequest) -> AgentResponse:
         intent=AgentIntent.PROFILE_PORTFOLIO,
         payload={
             "holdings": [h.model_dump() for h in body.portfolio.holdings],
-            "benchmark": body.benchmark,
+            "benchmarks": body.benchmarks,
             "start_date": body.start_date.isoformat(),
             "end_date": body.end_date.isoformat(),
         },

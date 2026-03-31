@@ -1,6 +1,11 @@
 import { useCallback, useRef, useState } from 'react';
-import Plot from 'react-plotly.js';
+import _Plot from 'react-plotly.js';
 import MetricCard from '../components/MetricCard';
+
+// react-plotly.js is CJS; in Vite dev the namespace object is returned instead
+// of the component directly — unwrap .default if needed.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Plot = (_Plot as any).default ?? _Plot;
 
 // ---------------------------------------------------------------------------
 // Types

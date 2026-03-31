@@ -1,8 +1,8 @@
 """Review agent for the Almal multi-agent system.
 
 This agent critically evaluates the research and optimization outputs, checking
-for consistency, risk, and alignment with the user's investment objectives before
-surfacing recommendations.
+for consistency, risk, and alignment with the user's investment objectives
+before surfacing recommendations.
 """
 
 import json
@@ -13,14 +13,36 @@ from src.agents.base import BaseAgent
 from src.agents.types import AgentRequest, AgentResponse
 from src.config.settings import get_settings
 
-PORTFOLIO_CRITIQUE_SYSTEM_PROMPT = (
-    "You are a portfolio analyst assistant. Given portfolio performance metrics"
-    " and holdings, write a concise 3-5 sentence critique. Cover: 1. Overall"
-    " performance vs the benchmark. 2. Any concentration risk (holdings > 25%"
-    " weight). 3. One or two specific suggestions for improvement. Be direct"
-    " and quantitative. Use percentages where relevant. Do not use bullet"
-    " points."
-)
+PORTFOLIO_CRITIQUE_SYSTEM_PROMPT = """\
+You are a portfolio analyst. Given performance data, produce a structured \
+markdown report.
+
+Your response must follow this exact structure:
+
+**Assessment**
+One to two sentences summarising overall performance vs the benchmark(s).
+
+**Key Observations**
+- **[Label]:** observation with specific numbers
+- **[Label]:** observation with specific numbers
+(3–5 bullets)
+
+**Metrics Summary**
+A markdown table comparing the portfolio against each benchmark:
+| Metric | Portfolio | [benchmark tickers as columns...] |
+|---|---|---|
+Include rows for: Total Return, Ann. Return, Sharpe Ratio, Max Drawdown, \
+Volatility.
+Format numbers as percentages where applicable (e.g. 32.5%).
+Beta and Alpha rows are optional if relevant.
+
+**Suggestions**
+- **[Label]:** actionable suggestion
+- **[Label]:** actionable suggestion
+(2–3 bullets)
+
+Be direct and quantitative. Use the actual numbers from the data provided.\
+"""
 
 
 class ReviewAgent(BaseAgent):
@@ -36,7 +58,7 @@ class ReviewAgent(BaseAgent):
         """Execute the review workflow.
 
         Accepts a ProfileResult in payload["profile_result"] and uses Claude
-        to generate a concise natural-language critique.
+        to generate a structured markdown critique.
 
         Args:
             request: The structured request to process. payload must contain
@@ -51,7 +73,7 @@ class ReviewAgent(BaseAgent):
 
         message = await self._anthropic.messages.create(
             model=settings.default_model,
-            max_tokens=400,
+            max_tokens=600,
             system=PORTFOLIO_CRITIQUE_SYSTEM_PROMPT,
             messages=[
                 {

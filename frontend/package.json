@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@types/react-plotly.js": "^2.6.4",
-    "plotly.js": "^3.4.0",
+    "plotly.js": "^2.35.3",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-plotly.js": "^2.6.0",
