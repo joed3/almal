@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     orchestrator_model: str = "claude-sonnet-4-6"
     default_model: str = "claude-sonnet-4-6"
+    # US federal capital gains tax defaults (user-overridable via frontend)
+    short_term_tax_rate: float = 0.22
+    long_term_tax_rate: float = 0.15
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

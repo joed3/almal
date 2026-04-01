@@ -1,3 +1,4 @@
+from datetime import date
 from enum import StrEnum
 from typing import Literal
 
@@ -57,6 +58,50 @@ class AdvancedParams(BaseModel):
     )
 
 
+class LotData(BaseModel):
+    """Lot-level purchase data for a single position, used for tax computation."""
+
+    ticker: str
+    shares: float
+    purchase_date: date | None = None
+    cost_basis: float | None = None
+
+
+class ConstraintSet(BaseModel):
+    """Structured portfolio constraints parsed from natural language."""
+
+    max_weights: dict[str, float] = Field(
+        default_factory=dict,
+        description="Maximum weight per ticker (e.g. {'AAPL': 0.15}).",
+    )
+    min_weights: dict[str, float] = Field(
+        default_factory=dict,
+        description="Minimum weight per ticker.",
+    )
+    min_shares: dict[str, float] = Field(
+        default_factory=dict,
+        description="Minimum shares to hold per ticker.",
+    )
+    portfolio_reduction_target: float | None = Field(
+        default=None,
+        ge=0,
+        description="Target dollar reduction in total portfolio value.",
+    )
+    tax_aware: bool = Field(
+        default=False,
+        description="Whether to apply a tax-efficiency penalty to the objective.",
+    )
+    tax_aware_weight: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Strength of the tax penalty: 0 = ignore, "
+            "1 = strongly prefer tax efficiency."
+        ),
+    )
+
+
 class OptimizeRequest(BaseModel):
     """Request payload for the optimize endpoint."""
 
@@ -88,6 +133,14 @@ class OptimizeRequest(BaseModel):
         default_factory=list,
         description="Black-Litterman views (only used when strategy=black_litterman).",
     )
+    constraints: ConstraintSet | None = Field(
+        default=None,
+        description="Optional parsed portfolio constraints.",
+    )
+    lots: list[LotData] = Field(
+        default_factory=list,
+        description="Lot-level purchase data used for tax-aware optimization.",
+    )
 
 
 class AllocationRequirement(BaseModel):
@@ -99,6 +152,8 @@ class AllocationRequirement(BaseModel):
     target_shares: float
     shares_delta: float
     target_dollars: float
+    est_tax_impact: float | None = None
+    holding_days: int | None = None
 
 
 class OptimizationMetrics(BaseModel):
@@ -171,3 +226,24 @@ class BacktestResult(BaseModel):
     benchmark_stats: BacktestStats
     bah_cumulative: list[float] | None = None
     bah_stats: BacktestStats | None = None
+
+
+class ParseConstraintsRequest(BaseModel):
+    """Request payload for the constraint parser endpoint."""
+
+    text: str = Field(..., description="Free-text natural language constraint input.")
+    tickers: list[str] = Field(default_factory=list)
+    lots: list[LotData] = Field(default_factory=list)
+
+
+class ParseConstraintsResponse(BaseModel):
+    """Response from the constraint parser endpoint."""
+
+    constraints: ConstraintSet
+    chips: list[str] = Field(
+        description="Human-readable labels for each parsed constraint."
+    )
+    clarification_needed: str | None = Field(
+        default=None,
+        description="A clarifying question if the input was ambiguous.",
+    )

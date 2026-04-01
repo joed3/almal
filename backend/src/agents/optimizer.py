@@ -7,7 +7,13 @@ risk parity, etc.) to generate optimal portfolio weight allocations.
 from src.agents.base import BaseAgent
 from src.agents.types import AgentIntent, AgentRequest, AgentResponse
 from src.analysis.optimization import PortfolioOptimizer
-from src.models.optimizer import AdvancedParams, BLView, OptimizationStrategy
+from src.models.optimizer import (
+    AdvancedParams,
+    BLView,
+    ConstraintSet,
+    LotData,
+    OptimizationStrategy,
+)
 
 
 class OptimizerAgent(BaseAgent):
@@ -49,6 +55,12 @@ class OptimizerAgent(BaseAgent):
         raw_views = request.payload.get("views", [])
         views = [BLView(**v) for v in raw_views] if raw_views else []
 
+        raw_constraints = request.payload.get("constraints")
+        constraints = ConstraintSet(**raw_constraints) if raw_constraints else None
+
+        raw_lots = request.payload.get("lots", [])
+        lots = [LotData(**lot) for lot in raw_lots] if raw_lots else []
+
         if not tickers:
             return AgentResponse(
                 intent=request.intent,
@@ -67,6 +79,8 @@ class OptimizerAgent(BaseAgent):
                 lookback_days=lookback_years * 365,
                 views=views,
                 advanced_params=advanced_params,
+                constraints=constraints,
+                lots=lots,
             )
             return AgentResponse(
                 intent=request.intent,

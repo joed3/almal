@@ -167,6 +167,24 @@ interface BLView {
   confidence: 'low' | 'medium' | 'high';
 }
 
+interface ConstraintSet {
+  max_weights: Record<string, number>;
+  min_weights: Record<string, number>;
+  min_shares: Record<string, number>;
+  portfolio_reduction_target: number | null;
+  tax_aware: boolean;
+  tax_aware_weight: number;
+}
+
+const EMPTY_CONSTRAINTS: ConstraintSet = {
+  max_weights: {},
+  min_weights: {},
+  min_shares: {},
+  portfolio_reduction_target: null,
+  tax_aware: false,
+  tax_aware_weight: 0.5,
+};
+
 interface AdvancedParams {
   risk_free_rate?: number;
   cvar_beta?: number;
@@ -469,6 +487,16 @@ export default function Optimizer() {
   const [advancedParams, setAdvancedParams] = useState<AdvancedParams>({});
   const [blViews, setBlViews] = useState<BLView[]>([]);
 
+  // Constraints state
+  const [constraintText, setConstraintText] = useState('');
+  const [constraintParsing, setConstraintParsing] = useState(false);
+  const [constraintChips, setConstraintChips] = useState<string[]>([]);
+  const [parsedConstraints, setParsedConstraints] = useState<ConstraintSet>(EMPTY_CONSTRAINTS);
+  const [clarificationNeeded, setClarificationNeeded] = useState<string | null>(null);
+  const [taxAwareWeight, setTaxAwareWeight] = useState(0.5);
+  const [shortTermRate, setShortTermRate] = useState(22);
+  const [longTermRate, setLongTermRate] = useState(15);
+
   // Lookback years for optimization data window
   const [lookbackYears, setLookbackYears] = useState<number>(
     STRATEGY_LOOKBACK_DEFAULTS[strategy]
@@ -563,6 +591,43 @@ export default function Optimizer() {
 
   const onDragLeave = () => setIsDragging(false);
 
+  const parseConstraints = async () => {
+    if (!constraintText.trim()) return;
+    setConstraintParsing(true);
+    setClarificationNeeded(null);
+    const lots = portfolio?.holdings.flatMap((h) =>
+      h.lots.map((l) => ({ ticker: h.ticker, shares: l.shares, purchase_date: l.purchase_date, cost_basis: l.cost_basis }))
+    ) ?? [];
+    try {
+      const res = await fetch('http://127.0.0.1:8100/optimize/parse-constraints', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: constraintText, tickers: candidates, lots }),
+      });
+      const data = await res.json();
+      if (data.clarification_needed) {
+        setClarificationNeeded(data.clarification_needed);
+      } else {
+        setParsedConstraints({ ...EMPTY_CONSTRAINTS, ...data.constraints });
+        setConstraintChips((prev) => [...prev, ...data.chips]);
+        setConstraintText('');
+      }
+    } catch (err) {
+      console.error('Constraint parse failed', err);
+    } finally {
+      setConstraintParsing(false);
+    }
+  };
+
+  const removeChip = (i: number) => {
+    setConstraintChips((prev) => prev.filter((_, j) => j !== i));
+    if (constraintChips.length === 1) setParsedConstraints(EMPTY_CONSTRAINTS);
+  };
+
+  const hasLotData = (portfolio?.holdings ?? []).some((h) =>
+    h.lots.some((l) => l.purchase_date !== null || l.cost_basis !== null)
+  );
+
   const runOptimization = async () => {
     const current_portfolio: Record<string, number> = {};
     const activeTickers = [...candidates];
@@ -603,6 +668,14 @@ export default function Optimizer() {
           lookback_years: lookbackYears,
           advanced_params: Object.keys(cleanParams).length > 0 ? cleanParams : undefined,
           views: validViews.length > 0 ? validViews : undefined,
+          constraints: constraintChips.length > 0 ? {
+            ...parsedConstraints,
+            tax_aware: parsedConstraints.tax_aware,
+            tax_aware_weight: taxAwareWeight,
+          } : undefined,
+          lots: portfolio?.holdings.flatMap((h) =>
+            h.lots.map((l) => ({ ticker: h.ticker, shares: l.shares, purchase_date: l.purchase_date, cost_basis: l.cost_basis }))
+          ) ?? [],
         }),
       });
 
@@ -768,6 +841,111 @@ export default function Optimizer() {
                   onChange={(e) => setPrincipal(Number(e.target.value))}
                   className="w-full bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded-md py-2 px-3 text-stone-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
+              </div>
+
+              {/* Constraints */}
+              <div>
+                <label className="block text-sm font-medium text-stone-600 dark:text-gray-400 mb-1.5">
+                  Constraints
+                  <InfoPopover content="Describe portfolio constraints in plain English. e.g. 'No position larger than 15%' or 'Keep at least 50 shares of AAPL'." />
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={constraintText}
+                    onChange={(e) => setConstraintText(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && parseConstraints()}
+                    placeholder="e.g. no position over 20%…"
+                    className="flex-1 bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded-md py-2 px-3 text-stone-900 dark:text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-stone-400 dark:placeholder-gray-600"
+                  />
+                  <button
+                    type="button"
+                    onClick={parseConstraints}
+                    disabled={constraintParsing || !constraintText.trim()}
+                    className="bg-stone-100 dark:bg-gray-800 hover:bg-stone-200 dark:hover:bg-gray-700 border border-stone-300 dark:border-gray-700 text-stone-700 dark:text-gray-300 text-sm font-medium rounded-md px-3 transition-colors disabled:opacity-50"
+                  >
+                    {constraintParsing ? '…' : 'Parse'}
+                  </button>
+                </div>
+                {clarificationNeeded && (
+                  <p className="mt-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded px-2 py-1.5">
+                    {clarificationNeeded}
+                  </p>
+                )}
+                {constraintChips.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {constraintChips.map((chip, i) => (
+                      <span
+                        key={i}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-300"
+                      >
+                        {chip}
+                        <button
+                          type="button"
+                          onClick={() => removeChip(i)}
+                          className="text-blue-400 hover:text-blue-700 dark:hover:text-blue-200 leading-none"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* Tax-aware controls */}
+                {hasLotData && (
+                  <div className="mt-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="taxAwareToggle"
+                        checked={parsedConstraints.tax_aware}
+                        onChange={(e) => setParsedConstraints((c) => ({ ...c, tax_aware: e.target.checked }))}
+                        className="w-4 h-4 text-blue-600 bg-white dark:bg-gray-700 border-stone-300 dark:border-gray-600 rounded focus:ring-blue-500 cursor-pointer"
+                      />
+                      <label htmlFor="taxAwareToggle" className="text-sm text-stone-700 dark:text-gray-300 cursor-pointer select-none">
+                        Tax-aware optimization
+                        <InfoPopover content="Penalises selling positions with large unrealised gains to reduce estimated capital gains tax. Requires lot data with purchase dates and cost basis." />
+                      </label>
+                    </div>
+                    {parsedConstraints.tax_aware && (
+                      <div className="pl-6 space-y-2">
+                        <div>
+                          <label className="block text-xs text-stone-500 dark:text-gray-400 mb-1">
+                            Tax penalty weight: {taxAwareWeight.toFixed(2)}
+                            <InfoPopover content="0 = ignore taxes entirely. 1 = strongly prefer tax-efficient trades. 0.5 is a balanced default." />
+                          </label>
+                          <input
+                            type="range"
+                            min="0" max="1" step="0.05"
+                            value={taxAwareWeight}
+                            onChange={(e) => setTaxAwareWeight(Number(e.target.value))}
+                            className="w-full accent-blue-600"
+                          />
+                        </div>
+                        <div className="flex gap-3">
+                          <div className="flex-1">
+                            <label className="block text-xs text-stone-500 dark:text-gray-400 mb-1">Short-term rate (%)</label>
+                            <input
+                              type="number" min="0" max="50" step="1"
+                              value={shortTermRate}
+                              onChange={(e) => setShortTermRate(Number(e.target.value))}
+                              className="w-full bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded px-2 py-1.5 text-xs text-stone-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <label className="block text-xs text-stone-500 dark:text-gray-400 mb-1">Long-term rate (%)</label>
+                            <input
+                              type="number" min="0" max="50" step="1"
+                              value={longTermRate}
+                              onChange={(e) => setLongTermRate(Number(e.target.value))}
+                              className="w-full bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded px-2 py-1.5 text-xs text-stone-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Strategy selector */}

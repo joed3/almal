@@ -1,11 +1,18 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from src.agents.constraint_parser import ConstraintParserAgent
 from src.agents.orchestrator import OrchestratorAgent
 from src.agents.review import ReviewAgent
 from src.agents.types import AgentIntent, AgentRequest, AgentResponse
 from src.analysis.optimization import PortfolioOptimizer
-from src.models.optimizer import BacktestRequest, BacktestResult, OptimizeRequest
+from src.models.optimizer import (
+    BacktestRequest,
+    BacktestResult,
+    OptimizeRequest,
+    ParseConstraintsRequest,
+    ParseConstraintsResponse,
+)
 
 router = APIRouter(prefix="/optimize", tags=["optimizer"])
 
@@ -48,6 +55,34 @@ async def optimize_portfolio(request: OptimizeRequest) -> AgentResponse:
             detail=response.error or "Failed to optimize portfolio.",
         )
     return response
+
+
+@router.post("/parse-constraints", response_model=ParseConstraintsResponse)
+async def parse_constraints(
+    request: ParseConstraintsRequest,
+) -> ParseConstraintsResponse:
+    """Parse a natural language portfolio constraint into a structured ConstraintSet.
+
+    Args:
+        request: Free-text constraint plus available tickers and lot data.
+
+    Returns:
+        Parsed ConstraintSet, display chips, and an optional clarification question.
+    """
+    agent = ConstraintParserAgent()
+    try:
+        constraints, chips, clarification = await agent.parse(
+            text=request.text,
+            tickers=request.tickers,
+            lots=request.lots,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse constraints: {e}")
+    return ParseConstraintsResponse(
+        constraints=constraints,
+        chips=chips,
+        clarification_needed=clarification,
+    )
 
 
 @router.post("/backtest", response_model=BacktestResponse)

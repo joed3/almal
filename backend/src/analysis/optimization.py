@@ -19,6 +19,7 @@ from skfolio.optimization import HierarchicalRiskParity, RiskBudgeting
 from skfolio.optimization import MeanRisk as SkfolioMeanRisk
 from skfolio.optimization import ObjectiveFunction as SkfolioObjectiveFunction
 
+from src.config.settings import get_settings
 from src.data.market import market_client
 from src.models.optimizer import (
     AdvancedParams,
@@ -26,7 +27,9 @@ from src.models.optimizer import (
     BacktestResult,
     BacktestStats,
     BLView,
+    ConstraintSet,
     EfficientFrontierPoint,
+    LotData,
     OptimizationMetrics,
     OptimizationStrategy,
     OptimizeResult,
@@ -36,6 +39,24 @@ logger = logging.getLogger(__name__)
 
 # Confidence level -> Idzorek percentage uncertainty mapping
 _BL_CONFIDENCE_MAP = {"low": 0.25, "medium": 0.50, "high": 0.90}
+
+
+def _apply_weight_bounds(
+    ef: EfficientFrontier,
+    tickers: list[str],
+    weight_bounds: dict[str, tuple[float, float]] | None,
+) -> None:
+    """Inject per-ticker weight bound constraints into an EfficientFrontier object."""
+    if not weight_bounds:
+        return
+    for ticker, (lo, hi) in weight_bounds.items():
+        if ticker not in tickers:
+            continue
+        i = tickers.index(ticker)
+        if lo > 0:
+            ef.add_constraint(lambda w, idx=i, lb=lo: w[idx] >= lb)
+        if hi < 1.0:
+            ef.add_constraint(lambda w, idx=i, ub=hi: w[idx] <= ub)
 
 
 class PortfolioOptimizer:
@@ -58,6 +79,8 @@ class PortfolioOptimizer:
         lookback_days: int = 365 * 3,
         views: list[BLView] | None = None,
         advanced_params: AdvancedParams | None = None,
+        constraints: ConstraintSet | None = None,
+        lots: list[LotData] | None = None,
     ) -> OptimizeResult:
         """Run the optimization pipeline for the given candidate universe.
 
@@ -106,16 +129,73 @@ class PortfolioOptimizer:
         if df.empty:
             raise ValueError("Cleaned price dataframe is empty.")
 
-        # 2. Route to the appropriate optimizer
-        cleaned_weights, metrics, curve_points = self._compute_optimal_weights(
-            df, strategy, rfr, advanced_params, views or []
-        )
-
-        # 3. Discrete Allocation
+        # 2. Compute portfolio value (apply reduction target if any)
         current_value = sum(
             current_portfolio.get(t, 0.0) * latest_prices.get(t, 0.0) for t in tickers
         )
         total_value = current_value + new_cash
+        if constraints and constraints.portfolio_reduction_target:
+            total_value = max(0.0, total_value - constraints.portfolio_reduction_target)
+
+        # 3. Build per-ticker weight bounds from constraints
+        weight_bounds: dict[str, tuple[float, float]] = {}
+        if constraints and total_value > 0:
+            for ticker in df.columns:
+                lo = constraints.min_weights.get(ticker, 0.0)
+                hi = constraints.max_weights.get(ticker, 1.0)
+                if ticker in constraints.min_shares:
+                    price = latest_prices.get(ticker, 0.0)
+                    if price > 0:
+                        lo = max(
+                            lo, constraints.min_shares[ticker] * price / total_value
+                        )
+                weight_bounds[ticker] = (lo, min(hi, 1.0))
+
+        # 4. Compute tax-aware mu adjustment (MV strategies only)
+        mu_override: pd.Series | None = None
+        lots_by_ticker: dict[str, list[LotData]] = {}
+        if lots:
+            for lot in lots:
+                lots_by_ticker.setdefault(lot.ticker, []).append(lot)
+
+        if constraints and constraints.tax_aware and lots_by_ticker:
+            settings = get_settings()
+            st_rate = settings.short_term_tax_rate
+            lt_rate = settings.long_term_tax_rate
+            today = date.today()
+            mu_base = expected_returns.mean_historical_return(df)
+            mu_override = mu_base.copy()
+            for ticker in df.columns:
+                ticker_lots = lots_by_ticker.get(ticker, [])
+                price = latest_prices.get(ticker, 0.0)
+                if not ticker_lots or price <= 0:
+                    continue
+                total_tax = 0.0
+                total_shares_lotted = sum(lot.shares for lot in ticker_lots)
+                for lot in ticker_lots:
+                    if lot.cost_basis is None or lot.purchase_date is None:
+                        continue
+                    gain = price - lot.cost_basis
+                    if gain <= 0:
+                        continue
+                    days = (today - lot.purchase_date).days
+                    rate = st_rate if days <= 365 else lt_rate
+                    total_tax += lot.shares * gain * rate
+                position_value = total_shares_lotted * price
+                if position_value > 0 and ticker in mu_override.index:
+                    drag = (total_tax / position_value) * constraints.tax_aware_weight
+                    mu_override[ticker] -= drag
+
+        # 5. Route to the appropriate optimizer
+        cleaned_weights, metrics, curve_points = self._compute_optimal_weights(
+            df,
+            strategy,
+            rfr,
+            advanced_params,
+            views or [],
+            weight_bounds=weight_bounds or None,
+            mu_override=mu_override,
+        )
 
         if total_value <= 0:
             return OptimizeResult(
@@ -126,6 +206,7 @@ class PortfolioOptimizer:
                 leftover_cash=0.0,
             )
 
+        # 6. Discrete Allocation
         da = DiscreteAllocation(
             cleaned_weights,
             pd.Series(latest_prices),
@@ -136,6 +217,12 @@ class PortfolioOptimizer:
         except Exception:
             alloc_result, leftover = da.greedy_portfolio()
 
+        # 7. Build allocations with tax impact and holding days
+        today = date.today()
+        settings = get_settings()
+        st_rate = settings.short_term_tax_rate
+        lt_rate = settings.long_term_tax_rate
+
         allocations = []
         for ticker in tickers:
             target_shares = alloc_result.get(ticker, 0)
@@ -144,14 +231,56 @@ class PortfolioOptimizer:
 
             if target_shares > 0 or current_shares > 0:
                 dollar_alloc = target_shares * latest_prices.get(ticker, 0.0)
+                price = latest_prices.get(ticker, 0.0)
+                delta = target_shares - current_shares
+
+                # Estimate capital gains tax on shares being sold (FIFO)
+                est_tax: float | None = None
+                if delta < 0 and price > 0 and lots_by_ticker.get(ticker):
+                    shares_to_sell = abs(delta)
+                    sorted_lots = sorted(
+                        lots_by_ticker[ticker],
+                        key=lambda lot: lot.purchase_date or date.min,
+                    )
+                    remaining = shares_to_sell
+                    running_tax = 0.0
+                    for lot in sorted_lots:
+                        if remaining <= 0:
+                            break
+                        sold = min(lot.shares, remaining)
+                        if lot.cost_basis is not None:
+                            gain = max(0.0, price - lot.cost_basis)
+                            days = (
+                                (today - lot.purchase_date).days
+                                if lot.purchase_date
+                                else 366
+                            )
+                            rate = st_rate if days <= 365 else lt_rate
+                            running_tax += sold * gain * rate
+                        remaining -= sold
+                    if running_tax > 0:
+                        est_tax = round(running_tax, 2)
+
+                # Holding days: use oldest lot with a known purchase_date
+                holding_days: int | None = None
+                ticker_lots = lots_by_ticker.get(ticker, [])
+                dated_lots = [
+                    lot for lot in ticker_lots if lot.purchase_date is not None
+                ]
+                if dated_lots:
+                    oldest = min(dated_lots, key=lambda lot: lot.purchase_date)  # type: ignore[arg-type, return-value]
+                    holding_days = (today - oldest.purchase_date).days  # type: ignore[operator]
+
                 allocations.append(
                     AllocationRequirement(
                         ticker=ticker,
                         weight=weight,
                         current_shares=current_shares,
                         target_shares=target_shares,
-                        shares_delta=target_shares - current_shares,
+                        shares_delta=delta,
                         target_dollars=dollar_alloc,
+                        est_tax_impact=est_tax,
+                        holding_days=holding_days,
                     )
                 )
 
@@ -172,8 +301,20 @@ class PortfolioOptimizer:
         rfr: float,
         advanced_params: AdvancedParams | None,
         views: list[BLView],
+        weight_bounds: dict[str, tuple[float, float]] | None = None,
+        mu_override: "pd.Series | None" = None,
     ) -> tuple[dict[str, float], OptimizationMetrics, list[EfficientFrontierPoint]]:
-        """Compute mathematically optimal weights for a given DataFrame and strategy."""
+        """Compute mathematically optimal weights for a given DataFrame and strategy.
+
+        Args:
+            df: Price DataFrame (dates × tickers).
+            strategy: Optimization objective.
+            rfr: Risk-free rate.
+            advanced_params: Optional strategy-specific parameter overrides.
+            views: Black-Litterman views.
+            weight_bounds: Per-ticker (min, max) weight bounds.
+            mu_override: Pre-computed expected returns (used for tax-aware mode).
+        """
         skfolio_strategies = {
             OptimizationStrategy.RISK_PARITY,
             OptimizationStrategy.HRP,
@@ -181,7 +322,9 @@ class PortfolioOptimizer:
         }
 
         if strategy in skfolio_strategies:
-            cleaned_weights = self._optimize_skfolio(df, strategy, advanced_params)
+            cleaned_weights = self._optimize_skfolio(
+                df, strategy, advanced_params, weight_bounds
+            )
             ret_series = df.pct_change().dropna()
             w_arr = np.array([cleaned_weights.get(t, 0.0) for t in df.columns])
             port_ret = ret_series.values @ w_arr
@@ -198,6 +341,7 @@ class PortfolioOptimizer:
         elif strategy == OptimizationStrategy.BLACK_LITTERMAN:
             mu_bl, S = self._compute_bl_expected_returns(df, views, advanced_params)
             ef = EfficientFrontier(mu_bl, S)
+            _apply_weight_bounds(ef, df.columns.tolist(), weight_bounds)
             ef.max_sharpe(risk_free_rate=rfr)
             cleaned_weights = ef.clean_weights(cutoff=0.01)
             ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=rfr)
@@ -209,9 +353,14 @@ class PortfolioOptimizer:
             curve_points = self._generate_frontier_curve(mu_bl, S)
 
         else:
-            mu = expected_returns.mean_historical_return(df)
+            mu = (
+                mu_override
+                if mu_override is not None
+                else expected_returns.mean_historical_return(df)
+            )
             S = risk_models.sample_cov(df)
             ef = EfficientFrontier(mu, S)
+            _apply_weight_bounds(ef, df.columns.tolist(), weight_bounds)
 
             if strategy == OptimizationStrategy.MIN_VOLATILITY:
                 ef.min_volatility()
@@ -232,7 +381,12 @@ class PortfolioOptimizer:
                 annual_volatility=vol,
                 sharpe_ratio=sharpe,
             )
-            curve_points = self._generate_frontier_curve(mu, S)
+            mu_for_frontier = (
+                expected_returns.mean_historical_return(df)
+                if mu_override is not None
+                else mu
+            )
+            curve_points = self._generate_frontier_curve(mu_for_frontier, S)
 
         return cleaned_weights, metrics, curve_points
 
@@ -241,6 +395,7 @@ class PortfolioOptimizer:
         df: pd.DataFrame,
         strategy: OptimizationStrategy,
         advanced_params: AdvancedParams | None,
+        weight_bounds: dict[str, tuple[float, float]] | None = None,
     ) -> dict[str, float]:
         """Run a skfolio-based optimization and return a cleaned weight dict.
 
@@ -291,6 +446,16 @@ class PortfolioOptimizer:
         for ticker, w in zip(tickers, model.weights_):
             if float(w) > 0.005:  # trim near-zero weights
                 raw_weights[ticker] = float(w)
+
+        # Apply weight bounds via clip + renormalise
+        if weight_bounds:
+            for ticker in list(raw_weights.keys()):
+                lo, hi = weight_bounds.get(ticker, (0.0, 1.0))
+                raw_weights[ticker] = max(lo, min(hi, raw_weights[ticker]))
+            # Honour min weights for tickers not yet in the result
+            for ticker, (lo, _) in weight_bounds.items():
+                if lo > 0 and ticker in tickers and ticker not in raw_weights:
+                    raw_weights[ticker] = lo
 
         total = sum(raw_weights.values())
         return {t: w / total for t, w in raw_weights.items()} if total > 0 else {}
