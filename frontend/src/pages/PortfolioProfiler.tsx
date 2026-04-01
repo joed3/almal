@@ -118,6 +118,11 @@ function fmt2(v: number): string {
 // Component
 // ---------------------------------------------------------------------------
 
+interface SearchResult {
+  symbol: string;
+  name: string;
+}
+
 export default function PortfolioProfiler() {
   const context = useAppContext();
   const {
@@ -131,8 +136,11 @@ export default function PortfolioProfiler() {
 
   const result = profilerResult as ProfileResult | null;
 
-  // Multi-benchmark state
-  const [customInput, setCustomInput] = useState<string>('');
+  // Benchmark autocomplete state
+  const [bmQuery, setBmQuery] = useState<string>('');
+  const [bmResults, setBmResults] = useState<SearchResult[]>([]);
+  const [bmSearching, setBmSearching] = useState(false);
+  const [bmDropdown, setBmDropdown] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -167,9 +175,44 @@ export default function PortfolioProfiler() {
     setSelectedBenchmarks((prev) => prev.filter((b) => b !== ticker));
   }
 
-  function handleAddCustom() {
-    addBenchmark(customInput);
-    setCustomInput('');
+  async function searchBenchmark(q: string) {
+    if (!q.trim()) { setBmResults([]); setBmDropdown(false); return; }
+    setBmSearching(true);
+    try {
+      const resp = await fetch(
+        `http://localhost:8100/market/search?q=${encodeURIComponent(q)}`
+      );
+      if (!resp.ok) throw new Error('Search failed');
+      const data: SearchResult[] = await resp.json();
+      setBmResults(data);
+      setBmDropdown(true);
+    } catch {
+      setBmResults([]);
+    } finally {
+      setBmSearching(false);
+    }
+  }
+
+  function selectBenchmark(symbol: string) {
+    addBenchmark(symbol);
+    setBmQuery('');
+    setBmResults([]);
+    setBmDropdown(false);
+  }
+
+  function handleBmKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // If the input looks like a direct ticker, add it immediately
+      const upper = bmQuery.trim().toUpperCase();
+      if (/^[A-Z]{1,5}$/.test(upper)) {
+        selectBenchmark(upper);
+      } else if (bmResults.length > 0) {
+        selectBenchmark(bmResults[0].symbol);
+      } else {
+        searchBenchmark(bmQuery);
+      }
+    }
   }
 
   // ---- Analysis ------------------------------------------------------------
@@ -320,45 +363,55 @@ export default function PortfolioProfiler() {
               ))}
             </div>
 
-            {/* Add from presets */}
+            {/* Autocomplete search + preset quick-adds */}
             <div className="flex items-center gap-2">
-              <select
-                defaultValue=""
-                onChange={(e) => {
-                  if (e.target.value) {
-                    addBenchmark(e.target.value);
-                    e.target.value = '';
-                  }
-                }}
-                className="bg-white dark:bg-gray-800 text-stone-900 dark:text-white border border-stone-300 dark:border-gray-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-              >
-                <option value="" disabled>
-                  Add preset…
-                </option>
-                {PRESET_BENCHMARKS.map((b) => (
-                  <option key={b} value={b}>
-                    {b}
-                  </option>
-                ))}
-              </select>
+              {/* Preset quick-add chips */}
+              {PRESET_BENCHMARKS.filter((b) => !selectedBenchmarks.includes(b)).map((b) => (
+                <button
+                  key={b}
+                  onClick={() => addBenchmark(b)}
+                  className="px-2 py-1 rounded-full text-xs bg-stone-100 dark:bg-gray-800 border border-stone-200 dark:border-gray-700 text-stone-600 dark:text-gray-300 hover:bg-stone-200 dark:hover:bg-gray-700 transition-colors"
+                >
+                  + {b}
+                </button>
+              ))}
+            </div>
 
-              {/* Custom ticker input */}
-              <input
-                type="text"
-                value={customInput}
-                onChange={(e) => setCustomInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleAddCustom();
-                }}
-                placeholder="Custom ticker"
-                className="bg-white dark:bg-gray-800 text-stone-900 dark:text-white border border-stone-300 dark:border-gray-700 rounded-md px-3 py-2 text-sm w-28 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-              <button
-                onClick={handleAddCustom}
-                className="px-3 py-2 rounded-md bg-stone-100 dark:bg-gray-700 text-stone-900 dark:text-white text-sm hover:bg-stone-200 dark:hover:bg-gray-600 transition-colors"
-              >
-                Add
-              </button>
+            {/* Autocomplete input */}
+            <div className="relative mt-1">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={bmQuery}
+                  onChange={(e) => {
+                    setBmQuery(e.target.value);
+                    searchBenchmark(e.target.value);
+                  }}
+                  onKeyDown={handleBmKeyDown}
+                  onBlur={() => setTimeout(() => setBmDropdown(false), 150)}
+                  placeholder="Search benchmark ticker or name…"
+                  className="flex-1 bg-white dark:bg-gray-800 text-stone-900 dark:text-white border border-stone-300 dark:border-gray-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-stone-400 dark:placeholder-gray-600"
+                />
+                {bmSearching && (
+                  <div className="flex items-center pr-1">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500" />
+                  </div>
+                )}
+              </div>
+              {bmDropdown && bmResults.length > 0 && (
+                <ul className="absolute top-full mt-1 z-10 w-full bg-white dark:bg-gray-800 border border-stone-200 dark:border-gray-700 rounded-md shadow-lg max-h-52 overflow-y-auto">
+                  {bmResults.map((r) => (
+                    <li
+                      key={r.symbol}
+                      onMouseDown={() => selectBenchmark(r.symbol)}
+                      className="px-4 py-2 text-sm cursor-pointer hover:bg-stone-50 dark:hover:bg-gray-700 text-stone-700 dark:text-gray-200"
+                    >
+                      <strong className="text-stone-900 dark:text-white">{r.symbol}</strong>
+                      {' '}— {r.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
 
@@ -401,8 +454,15 @@ export default function PortfolioProfiler() {
         </div>
       )}
 
+      {/* Loading spinner */}
+      {loading && (
+        <div className="flex items-center justify-center py-20">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
+        </div>
+      )}
+
       {/* Results */}
-      {result && (
+      {!loading && result && (
         <div className="space-y-8">
           <div className="flex justify-end">
             <button

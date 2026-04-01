@@ -8,7 +8,15 @@ import type { Portfolio } from '../utils/csv';
 // For simplicity, we use any for complex results to avoid circular imports
 // if we don't want to extract all types immediately.
 export type Horizon = '1M' | '3M' | '6M' | 'YTD' | '1Y' | '3Y' | 'Max';
-export type OptimizationStrategy = 'min_volatility' | 'max_sharpe' | 'max_return' | 'regularized_sharpe';
+export type OptimizationStrategy =
+  | 'min_volatility'
+  | 'max_sharpe'
+  | 'max_return'
+  | 'regularized_sharpe'
+  | 'risk_parity'
+  | 'cvar'
+  | 'hrp'
+  | 'black_litterman';
 
 interface AppContextType {
   // Global Shared State

@@ -1,4 +1,5 @@
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -10,6 +11,50 @@ class OptimizationStrategy(StrEnum):
     MAX_SHARPE = "max_sharpe"
     MAX_RETURN = "max_return"
     REGULARIZED_SHARPE = "regularized_sharpe"
+    # skfolio-based strategies
+    RISK_PARITY = "risk_parity"
+    CVAR = "cvar"
+    HRP = "hrp"
+    BLACK_LITTERMAN = "black_litterman"
+
+
+class BLView(BaseModel):
+    """A single Black-Litterman view expressing an expected return for one ticker."""
+
+    ticker: str
+    expected_return: float = Field(
+        ..., description="Expected annual return as a decimal (e.g. 0.10 for 10%)."
+    )
+    confidence: Literal["low", "medium", "high"] = "medium"
+
+
+class AdvancedParams(BaseModel):
+    """Optional advanced parameters for fine-tuning an optimization run."""
+
+    risk_free_rate: float | None = Field(
+        default=None,
+        ge=0,
+        description="Annual risk-free rate override (e.g. 0.04 for 4%).",
+    )
+    cvar_beta: float | None = Field(
+        default=None,
+        ge=0.5,
+        le=0.999,
+        description="CVaR confidence level (default 0.95).",
+    )
+    hrp_linkage: str | None = Field(
+        default=None,
+        description="Linkage method for HRP clustering: 'single', 'ward', 'complete'.",
+    )
+    bl_tau: float | None = Field(
+        default=None,
+        gt=0,
+        description="Black-Litterman tau scaling parameter (default 0.05).",
+    )
+    bl_market_proxy: str | None = Field(
+        default=None,
+        description="Ticker for BL market proxy equilibrium returns (default 'SPY').",
+    )
 
 
 class OptimizeRequest(BaseModel):
@@ -28,6 +73,20 @@ class OptimizeRequest(BaseModel):
     strategy: OptimizationStrategy = Field(
         default=OptimizationStrategy.MAX_SHARPE,
         description="The mathematical strategy for optimization.",
+    )
+    lookback_years: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Years of historical price data to use for estimation.",
+    )
+    advanced_params: AdvancedParams | None = Field(
+        default=None,
+        description="Optional advanced parameter overrides.",
+    )
+    views: list[BLView] = Field(
+        default_factory=list,
+        description="Black-Litterman views (only used when strategy=black_litterman).",
     )
 
 
@@ -69,12 +128,21 @@ class OptimizeResult(BaseModel):
 
 
 class BacktestRequest(BaseModel):
-    """Request payload for the backtest endpoint."""
+    """Request payload for the walk-forward backtest endpoint."""
 
     tickers: list[str] = Field(..., min_length=1)
-    weights: dict[str, float] = Field(..., description="Optimized weights per ticker.")
+    strategy: OptimizationStrategy = Field(
+        default=OptimizationStrategy.MAX_SHARPE,
+        description="Optimization strategy to use at each rebalance.",
+    )
+    cadence: Literal["monthly", "quarterly", "annual", "buy_and_hold"] = Field(
+        default="quarterly",
+        description="How often to re-optimize the portfolio.",
+    )
     benchmark: str = Field(default="SPY", description="Benchmark ticker symbol.")
     lookback_years: int = Field(default=3, ge=1, le=10)
+    advanced_params: AdvancedParams | None = Field(default=None)
+    views: list[BLView] = Field(default_factory=list)
 
 
 class BacktestStats(BaseModel):
@@ -89,12 +157,17 @@ class BacktestStats(BaseModel):
 
 
 class BacktestResult(BaseModel):
-    """The structured result of a historical backtest simulation."""
+    """The structured result of a walk-forward backtest simulation."""
 
     dates: list[str]
     portfolio_cumulative: list[float]
     benchmark_cumulative: list[float]
     benchmark: str
     lookback_years: int
+    rebalance_dates: list[str]
+    rebalance_cadence: str
+    strategy_used: str
     stats: BacktestStats
     benchmark_stats: BacktestStats
+    bah_cumulative: list[float] | None = None
+    bah_stats: BacktestStats | None = None

@@ -68,9 +68,12 @@ async def run_backtest(request: BacktestRequest) -> BacktestResponse:
     try:
         result = optimizer.run_backtest(
             tickers=request.tickers,
-            weights=request.weights,
+            strategy=request.strategy,
+            cadence=request.cadence,
             benchmark=request.benchmark,
             lookback_years=request.lookback_years,
+            advanced_params=request.advanced_params,
+            views=request.views,
         )
     except ValueError as e:
         return BacktestResponse(success=False, error=str(e))

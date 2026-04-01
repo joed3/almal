@@ -1,17 +1,31 @@
 import logging
 from datetime import date, timedelta
 from math import sqrt
+from typing import Literal
 
+import numpy as np
 import pandas as pd
 from pypfopt import expected_returns, objective_functions, risk_models
+from pypfopt.black_litterman import (
+    BlackLittermanModel,
+    market_implied_prior_returns,
+    market_implied_risk_aversion,
+)
 from pypfopt.discrete_allocation import DiscreteAllocation
 from pypfopt.efficient_frontier import EfficientFrontier
+from skfolio.cluster import HierarchicalClustering
+from skfolio.cluster import LinkageMethod as SkfolioLinkageMethod
+from skfolio.optimization import HierarchicalRiskParity, RiskBudgeting
+from skfolio.optimization import MeanRisk as SkfolioMeanRisk
+from skfolio.optimization import ObjectiveFunction as SkfolioObjectiveFunction
 
 from src.data.market import market_client
 from src.models.optimizer import (
+    AdvancedParams,
     AllocationRequirement,
     BacktestResult,
     BacktestStats,
+    BLView,
     EfficientFrontierPoint,
     OptimizationMetrics,
     OptimizationStrategy,
@@ -20,9 +34,12 @@ from src.models.optimizer import (
 
 logger = logging.getLogger(__name__)
 
+# Confidence level -> Idzorek percentage uncertainty mapping
+_BL_CONFIDENCE_MAP = {"low": 0.25, "medium": 0.50, "high": 0.90}
+
 
 class PortfolioOptimizer:
-    """Wrapper around PyPortfolioOpt for portfolio optimization calculations."""
+    """Wrapper around PyPortfolioOpt and skfolio for portfolio optimization."""
 
     def __init__(self, risk_free_rate: float = 0.02) -> None:
         """Initialise the optimizer.
@@ -39,6 +56,8 @@ class PortfolioOptimizer:
         current_portfolio: dict[str, float],
         strategy: OptimizationStrategy,
         lookback_days: int = 365 * 3,
+        views: list[BLView] | None = None,
+        advanced_params: AdvancedParams | None = None,
     ) -> OptimizeResult:
         """Run the optimization pipeline for the given candidate universe.
 
@@ -48,10 +67,18 @@ class PortfolioOptimizer:
             current_portfolio: Map of ticker to current absolute share counts.
             strategy: The optimization objective function.
             lookback_days: How many days of historical data to use for stats.
+            views: Optional Black-Litterman views (only used for BL strategy).
+            advanced_params: Optional advanced parameter overrides.
 
         Returns:
             An OptimizeResult structured payload.
         """
+        rfr = (
+            advanced_params.risk_free_rate
+            if advanced_params and advanced_params.risk_free_rate is not None
+            else self.risk_free_rate
+        )
+
         # 1. Fetch historical price data
         end_date = date.today()
         start_date = end_date - timedelta(days=lookback_days)
@@ -79,67 +106,34 @@ class PortfolioOptimizer:
         if df.empty:
             raise ValueError("Cleaned price dataframe is empty.")
 
-        # 2. Calculate expected returns and sample covariance
-        mu = expected_returns.mean_historical_return(df)
-        S = risk_models.sample_cov(df)
+        # 2. Route to the appropriate optimizer
+        cleaned_weights, metrics, curve_points = self._compute_optimal_weights(
+            df, strategy, rfr, advanced_params, views or []
+        )
 
-        # 3. Optimize
-        ef = EfficientFrontier(mu, S)
-
-        if strategy == OptimizationStrategy.MIN_VOLATILITY:
-            ef.min_volatility()
-        elif strategy == OptimizationStrategy.MAX_SHARPE:
-            ef.max_sharpe(risk_free_rate=self.risk_free_rate)
-        elif strategy == OptimizationStrategy.MAX_RETURN:
-            # We must specify a target risk or just maximise return
-            # (which puts 100% in the single best asset). Without a target risk,
-            # max_return is trivial but we provide an L2 regularization or just a
-            # simple max return objective. PyPortfolioOpt efficient_return requires
-            # a target return. To just maximise return, we can just do max return by
-            # finding the asset with max mu and assigning weight 1.
-            # But more robustly, we use max_sharpe with high regularization.
-            # Let's just create a frontier and pick the highest return point.
-            ef.efficient_return(
-                target_return=mu.max() * 0.99
-            )  # slightly below max to leave room for optimizer tolerance
-        elif strategy == OptimizationStrategy.REGULARIZED_SHARPE:
-            ef.add_objective(objective_functions.L2_reg, gamma=0.1)
-            ef.max_sharpe(risk_free_rate=self.risk_free_rate)
-        else:
-            raise ValueError(f"Unknown strategy: {strategy}")
-
-        cleaned_weights = ef.clean_weights(cutoff=0.01)  # Trim weights < 1%
-
-        # 4. Performance metrics
-        ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=self.risk_free_rate)
-
-        # 5. Discrete Allocation
+        # 3. Discrete Allocation
         current_value = sum(
             current_portfolio.get(t, 0.0) * latest_prices.get(t, 0.0) for t in tickers
         )
         total_value = current_value + new_cash
 
-        # If total value is 0 or less, fallback to skip allocation
         if total_value <= 0:
             return OptimizeResult(
                 strategy=strategy,
                 allocations=[],
-                metrics=OptimizationMetrics(
-                    expected_annual_return=ret,
-                    annual_volatility=vol,
-                    sharpe_ratio=sharpe,
-                ),
-                frontier_curve=self._generate_frontier_curve(mu, S),
+                metrics=metrics,
+                frontier_curve=curve_points,
                 leftover_cash=0.0,
             )
 
         da = DiscreteAllocation(
-            cleaned_weights, pd.Series(latest_prices), total_portfolio_value=total_value
+            cleaned_weights,
+            pd.Series(latest_prices),
+            total_portfolio_value=total_value,
         )
         try:
             alloc_result, leftover = da.lp_portfolio()
         except Exception:
-            # Fallback to greedy if LP fails
             alloc_result, leftover = da.greedy_portfolio()
 
         allocations = []
@@ -148,7 +142,6 @@ class PortfolioOptimizer:
             current_shares = current_portfolio.get(ticker, 0.0)
             weight = cleaned_weights.get(ticker, 0.0)
 
-            # Record it if we own it or are buying it
             if target_shares > 0 or current_shares > 0:
                 dollar_alloc = target_shares * latest_prices.get(ticker, 0.0)
                 allocations.append(
@@ -164,15 +157,6 @@ class PortfolioOptimizer:
 
         allocations.sort(key=lambda x: x.weight, reverse=True)
 
-        # 6. Generate Efficient Frontier Curve
-        curve_points = self._generate_frontier_curve(mu, S)
-
-        metrics = OptimizationMetrics(
-            expected_annual_return=ret,
-            annual_volatility=vol,
-            sharpe_ratio=sharpe,
-        )
-
         return OptimizeResult(
             strategy=strategy,
             allocations=allocations,
@@ -181,35 +165,243 @@ class PortfolioOptimizer:
             leftover_cash=leftover,
         )
 
+    def _compute_optimal_weights(
+        self,
+        df: pd.DataFrame,
+        strategy: OptimizationStrategy,
+        rfr: float,
+        advanced_params: AdvancedParams | None,
+        views: list[BLView],
+    ) -> tuple[dict[str, float], OptimizationMetrics, list[EfficientFrontierPoint]]:
+        """Compute mathematically optimal weights for a given DataFrame and strategy."""
+        skfolio_strategies = {
+            OptimizationStrategy.RISK_PARITY,
+            OptimizationStrategy.HRP,
+            OptimizationStrategy.CVAR,
+        }
+
+        if strategy in skfolio_strategies:
+            cleaned_weights = self._optimize_skfolio(df, strategy, advanced_params)
+            ret_series = df.pct_change().dropna()
+            w_arr = np.array([cleaned_weights.get(t, 0.0) for t in df.columns])
+            port_ret = ret_series.values @ w_arr
+            ann_ret = float((1 + port_ret.mean()) ** 252 - 1)
+            ann_vol = float(port_ret.std() * sqrt(252))
+            sharpe = (ann_ret - rfr) / ann_vol if ann_vol > 0 else 0.0
+            metrics = OptimizationMetrics(
+                expected_annual_return=round(ann_ret, 4),
+                annual_volatility=round(ann_vol, 4),
+                sharpe_ratio=round(sharpe, 3),
+            )
+            curve_points: list[EfficientFrontierPoint] = []
+
+        elif strategy == OptimizationStrategy.BLACK_LITTERMAN:
+            mu_bl, S = self._compute_bl_expected_returns(df, views, advanced_params)
+            ef = EfficientFrontier(mu_bl, S)
+            ef.max_sharpe(risk_free_rate=rfr)
+            cleaned_weights = ef.clean_weights(cutoff=0.01)
+            ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=rfr)
+            metrics = OptimizationMetrics(
+                expected_annual_return=ret,
+                annual_volatility=vol,
+                sharpe_ratio=sharpe,
+            )
+            curve_points = self._generate_frontier_curve(mu_bl, S)
+
+        else:
+            mu = expected_returns.mean_historical_return(df)
+            S = risk_models.sample_cov(df)
+            ef = EfficientFrontier(mu, S)
+
+            if strategy == OptimizationStrategy.MIN_VOLATILITY:
+                ef.min_volatility()
+            elif strategy == OptimizationStrategy.MAX_SHARPE:
+                ef.max_sharpe(risk_free_rate=rfr)
+            elif strategy == OptimizationStrategy.MAX_RETURN:
+                ef.efficient_return(target_return=mu.max() * 0.99)
+            elif strategy == OptimizationStrategy.REGULARIZED_SHARPE:
+                ef.add_objective(objective_functions.L2_reg, gamma=0.1)
+                ef.max_sharpe(risk_free_rate=rfr)
+            else:
+                raise ValueError(f"Unknown strategy: {strategy}")
+
+            cleaned_weights = ef.clean_weights(cutoff=0.01)
+            ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=rfr)
+            metrics = OptimizationMetrics(
+                expected_annual_return=ret,
+                annual_volatility=vol,
+                sharpe_ratio=sharpe,
+            )
+            curve_points = self._generate_frontier_curve(mu, S)
+
+        return cleaned_weights, metrics, curve_points
+
+    def _optimize_skfolio(
+        self,
+        df: pd.DataFrame,
+        strategy: OptimizationStrategy,
+        advanced_params: AdvancedParams | None,
+    ) -> dict[str, float]:
+        """Run a skfolio-based optimization and return a cleaned weight dict.
+
+        Args:
+            df: Price DataFrame (dates x tickers).
+            strategy: One of RISK_PARITY, HRP, or CVAR.
+            advanced_params: Optional parameter overrides.
+
+        Returns:
+            Dict mapping ticker -> weight (values sum to ~1).
+        """
+        X = df.pct_change().dropna().to_numpy()
+        tickers = list(df.columns)
+
+        if strategy == OptimizationStrategy.RISK_PARITY:
+            model: RiskBudgeting | HierarchicalRiskParity | SkfolioMeanRisk = (
+                RiskBudgeting()
+            )
+        elif strategy == OptimizationStrategy.HRP:
+            linkage_str = (
+                advanced_params.hrp_linkage
+                if advanced_params and advanced_params.hrp_linkage
+                else "ward"
+            )
+            try:
+                linkage_method = SkfolioLinkageMethod(linkage_str.lower())
+            except ValueError:
+                linkage_method = SkfolioLinkageMethod.WARD
+            model = HierarchicalRiskParity(
+                hierarchical_clustering_estimator=HierarchicalClustering(
+                    linkage_method=linkage_method
+                )
+            )
+        else:  # CVAR
+            beta = (
+                advanced_params.cvar_beta
+                if advanced_params and advanced_params.cvar_beta is not None
+                else 0.95
+            )
+            model = SkfolioMeanRisk(
+                objective_function=SkfolioObjectiveFunction.MINIMIZE_RISK,
+                cvar_beta=beta,
+                min_weights=0.0,
+            )
+
+        model.fit(X)
+        raw_weights: dict[str, float] = {}
+        for ticker, w in zip(tickers, model.weights_):
+            if float(w) > 0.005:  # trim near-zero weights
+                raw_weights[ticker] = float(w)
+
+        total = sum(raw_weights.values())
+        return {t: w / total for t, w in raw_weights.items()} if total > 0 else {}
+
+    def _compute_bl_expected_returns(
+        self,
+        df: pd.DataFrame,
+        views: list[BLView],
+        advanced_params: AdvancedParams | None,
+    ) -> tuple[pd.Series, pd.DataFrame]:
+        """Compute Black-Litterman adjusted expected returns.
+
+        Uses market-implied equilibrium returns derived from a market proxy,
+        then incorporates any user-supplied views.
+
+        Args:
+            df: Price DataFrame (dates x tickers).
+            views: List of user views (may be empty).
+            advanced_params: Optional overrides for tau and market proxy.
+
+        Returns:
+            Tuple of (bl_mu, covariance_matrix).
+        """
+        end_date = date.today()
+        start_date = end_date - timedelta(days=365 * 3)
+        proxy = (
+            advanced_params.bl_market_proxy
+            if advanced_params and advanced_params.bl_market_proxy
+            else "SPY"
+        )
+        tau = (
+            advanced_params.bl_tau
+            if advanced_params and advanced_params.bl_tau is not None
+            else 0.05
+        )
+
+        # Fetch market proxy for delta estimation
+        market_prices: pd.Series | None = None
+        try:
+            history = market_client.fetch_price_history(proxy, start_date, end_date)
+            if history.bars:
+                closes = [bar.close for bar in history.bars]
+                dates_idx = [pd.to_datetime(bar.date) for bar in history.bars]
+                market_prices = pd.Series(closes, index=dates_idx)
+        except Exception as e:
+            logger.warning(f"BL: failed to fetch market proxy {proxy}: {e}")
+
+        S = risk_models.sample_cov(df)
+
+        if market_prices is not None and len(market_prices) > 10:
+            delta = market_implied_risk_aversion(market_prices)
+        else:
+            delta = 2.5  # fallback delta
+
+        # Use equal weights as the market portfolio proxy
+        n = len(df.columns)
+        mkt_weights = pd.Series({t: 1.0 / n for t in df.columns})
+        pi = market_implied_prior_returns(mkt_weights, delta, S)
+
+        tickers = list(df.columns)
+        valid_views = [v for v in views if v.ticker in tickers]
+
+        if valid_views:
+            # Use absolute_views dict + view_confidences for Idzorek omega scaling
+            abs_views = {v.ticker: v.expected_return for v in valid_views}
+            confidences = [
+                _BL_CONFIDENCE_MAP.get(v.confidence, 0.5) for v in valid_views
+            ]
+            bl = BlackLittermanModel(
+                S,
+                pi=pi,
+                absolute_views=abs_views,
+                view_confidences=confidences,
+                tau=tau,
+            )
+            mu_bl = bl.bl_returns()
+        else:
+            # No views: posterior == prior; return market-implied returns directly
+            mu_bl = pi
+
+        return mu_bl, S
+
     def run_backtest(
         self,
         tickers: list[str],
-        weights: dict[str, float],
+        strategy: OptimizationStrategy,
+        cadence: Literal["monthly", "quarterly", "annual", "buy_and_hold"],
         benchmark: str = "SPY",
         lookback_years: int = 3,
+        advanced_params: AdvancedParams | None = None,
+        views: list[BLView] | None = None,
     ) -> BacktestResult:
-        """Apply static optimized weights to historical data and measure performance.
+        """Run a walk-forward optimization backtest over historical data."""
+        rfr = (
+            advanced_params.risk_free_rate
+            if advanced_params and advanced_params.risk_free_rate is not None
+            else self.risk_free_rate
+        )
+        views = views or []
 
-        Args:
-            tickers: Tickers present in the weights dict.
-            weights: Normalized weight map (ticker -> float, should sum to ~1).
-            benchmark: Benchmark ticker to compare against.
-            lookback_years: Number of years of historical data to use.
-
-        Returns:
-            A BacktestResult containing cumulative returns and summary stats.
-        """
         end_date = date.today()
-        start_date = end_date - timedelta(days=lookback_years * 365 + 5)
+        test_start = pd.to_datetime(end_date - timedelta(days=lookback_years * 365 + 5))
+        data_start = test_start - pd.Timedelta(days=365)
 
-        active_tickers = [t for t in tickers if weights.get(t, 0) > 0]
-        all_symbols = list(set(active_tickers + [benchmark]))
+        all_symbols = list(set(tickers + [benchmark]))
 
         price_series: dict[str, pd.Series] = {}
         for symbol in all_symbols:
             try:
                 history = market_client.fetch_price_history(
-                    symbol, start_date, end_date
+                    symbol, data_start.date(), end_date
                 )
                 if history.bars:
                     closes = [bar.close for bar in history.bars]
@@ -218,42 +410,121 @@ class PortfolioOptimizer:
             except Exception as e:
                 logger.warning(f"Backtest: failed to fetch {symbol}: {e}")
 
-        available = [t for t in active_tickers if t in price_series]
+        available = [t for t in tickers if t in price_series]
         if not available or benchmark not in price_series:
             raise ValueError("Could not fetch sufficient price data for backtest.")
 
-        raw_weights = {t: weights[t] for t in available}
-        total_w = sum(raw_weights.values())
-        norm_weights = {t: w / total_w for t, w in raw_weights.items()}
-
-        df = pd.DataFrame({t: price_series[t] for t in available}).dropna()
+        df = (
+            pd.DataFrame({t: price_series[t] for t in available})
+            .dropna(how="all")
+            .ffill(limit=5)
+            .dropna()
+        )
         bench_series = price_series[benchmark].reindex(df.index).ffill()
 
-        if len(df) < 20:
+        df_test = df.loc[test_start:]
+        bench_test = bench_series.loc[test_start:]
+
+        if len(df_test) < 20:
             raise ValueError("Insufficient overlapping price data for backtest.")
 
         daily_rets = df.pct_change().dropna()
-        bench_rets = bench_series.pct_change().dropna()
-        daily_rets, bench_rets = daily_rets.align(bench_rets, join="inner", axis=0)
+        bench_rets = bench_test.pct_change().dropna()
 
-        port_daily: pd.Series = sum(
-            daily_rets[t] * norm_weights[t] for t in available if t in daily_rets
-        )
+        # Align lengths exactly
+        df_rets_test = daily_rets.loc[bench_rets.index]
 
-        port_cum = (1 + port_daily).cumprod()
+        # Determine rebalance dates based on cadence inside df_test
+        if cadence == "monthly":
+            group = [df_test.index.year, df_test.index.month]
+        elif cadence == "quarterly":
+            group = [df_test.index.year, df_test.index.quarter]
+        elif cadence == "annual":
+            group = [df_test.index.year]
+        else:
+            group = None
+
+        if group:
+            rebalance_dates = (
+                df_test.groupby(group).apply(lambda x: x.index[-1]).tolist()
+            )
+        else:
+            rebalance_dates = []
+
+        # Identify the trading day strictly prior to `first_day` to prevent same-day
+        # data leakage
+        first_day = df_test.index[0]
+        prev_dates = df.index[df.index < first_day]
+        if len(prev_dates) == 0:
+            raise ValueError("No prior data available to compute initial weights.")
+        prev_day = prev_dates[-1]
+
+        # Remove the very last day if it accidentally snuck in, we can't project past it
+        if len(rebalance_dates) > 0 and rebalance_dates[-1] == df_test.index[-1]:
+            rebalance_dates.pop()
+
+        def _get_w(T: pd.Timestamp) -> dict[str, float]:
+            try:
+                df_est = df.loc[T - pd.Timedelta(days=365) : T]
+                if len(df_est) < 20:
+                    raise Exception("Not enough data in estimation window")
+                w, _, _ = self._compute_optimal_weights(
+                    df_est, strategy, rfr, advanced_params, views
+                )
+                # Filter out near zero
+                w = {t: val for t, val in w.items() if val > 0.001}
+                total = sum(w.values())
+                return (
+                    {t: val / total for t, val in w.items()}
+                    if total > 0
+                    else {t: 1.0 / len(available) for t in available}
+                )
+            except Exception:
+                n = len(available)
+                return {t: 1.0 / n for t in available}
+
+        # Backtest loop for Walk-Forward
+        w_bnh = _get_w(prev_day)
+        port_ret_bnh = sum(df_rets_test[t] * w_bnh.get(t, 0) for t in available)
+        bnh_cum = (1 + port_ret_bnh).cumprod()
+
+        port_ret_wf = pd.Series(0.0, index=df_rets_test.index)
+        current_w = _get_w(prev_day)
+
+        rebalance_date_strs = [str(prev_day.date())]
+        reb_set = set(rebalance_dates)
+
+        for d in df_rets_test.index:
+            port_ret_wf[d] = sum(
+                df_rets_test[t][d] * current_w.get(t, 0) for t in available
+            )
+            if d in reb_set:
+                current_w = _get_w(d)
+                rebalance_date_strs.append(str(d.date()))
+
+        port_cum = (1 + port_ret_wf).cumprod()
         bench_cum = (1 + bench_rets).cumprod()
 
         dates_list = [str(d.date()) for d in port_cum.index]
 
         def _compute_stats(daily: pd.Series, cum: pd.Series) -> BacktestStats:
             n = len(daily)
+            if n == 0 or cum.empty:
+                return BacktestStats(
+                    total_return=0,
+                    annualized_return=0,
+                    annual_volatility=0,
+                    sharpe_ratio=0,
+                    max_drawdown=0,
+                    calmar_ratio=0,
+                )
             total_ret = float(cum.iloc[-1] - 1)
             ann_ret = float((1 + total_ret) ** (252 / n) - 1)
             ann_vol = float(daily.std() * sqrt(252))
             sharpe = (ann_ret - self.risk_free_rate) / ann_vol if ann_vol > 0 else 0.0
             running_max = cum.cummax()
             drawdowns = (cum - running_max) / running_max
-            max_dd = float(drawdowns.min())
+            max_dd = float(drawdowns.min()) if not drawdowns.empty else 0.0
             calmar = ann_ret / abs(max_dd) if max_dd != 0 else 0.0
             return BacktestStats(
                 total_return=round(total_ret, 4),
@@ -264,8 +535,9 @@ class PortfolioOptimizer:
                 calmar_ratio=round(calmar, 3),
             )
 
-        port_stats = _compute_stats(port_daily, port_cum)
+        port_stats = _compute_stats(port_ret_wf, port_cum)
         bench_stats = _compute_stats(bench_rets, bench_cum)
+        bnh_stats = _compute_stats(port_ret_bnh, bnh_cum)
 
         return BacktestResult(
             dates=dates_list,
@@ -273,8 +545,13 @@ class PortfolioOptimizer:
             benchmark_cumulative=[round(float(v), 4) for v in bench_cum.to_numpy()],
             benchmark=benchmark,
             lookback_years=lookback_years,
+            rebalance_dates=rebalance_date_strs,
+            rebalance_cadence=cadence,
+            strategy_used=strategy,
             stats=port_stats,
             benchmark_stats=bench_stats,
+            bah_cumulative=[round(float(v), 4) for v in bnh_cum.to_numpy()],
+            bah_stats=bnh_stats,
         )
 
     def _generate_frontier_curve(
@@ -290,17 +567,13 @@ class PortfolioOptimizer:
         ef_min_vol.min_volatility()
         min_ret_from_min_vol, vol_from_min_vol, _ = ef_min_vol.portfolio_performance()
 
-        # If min return is lower than min_vol return, we start from min_vol return
         start_ret = max(min_ret, min_ret_from_min_vol)
 
-        # Create a range of target returns slightly inside bounds
-        # to avoid optimizer crashes
         target_returns = [
             start_ret + (m / max(num_points - 1, 1)) * (max_ret - start_ret)
             for m in range(num_points)
         ]
 
-        # Trim edge values slightly to avoid solver errors
         if len(target_returns) > 2:
             target_returns[0] = (
                 target_returns[0] * 1.001
@@ -331,7 +604,6 @@ class PortfolioOptimizer:
                     f"Failed to calculate frontier point for target {target}: {e}"
                 )
 
-        # If generation failed, fallback to returning the endpoints to guarantee a line.
         if len(curve_points) < 2:
             return [
                 EfficientFrontierPoint(

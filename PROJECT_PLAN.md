@@ -452,8 +452,11 @@ Fast, isolated improvements that don't depend on any other v2 work.
 
 - **Profiler benchmark autocomplete:** Replace the freeform benchmark text input with the `/market/search`-backed autocomplete dropdown, matching the UX in Investigator and Optimizer. Chip-based multi-select is already in place; only the input mechanism changes.
 - **Profiler loading indicator:** Add a spinner/progress wheel to the Profiler results panel while the analysis is running, matching the loading state already present in the Optimizer panel. No backend changes required — frontend-only state management.
+- **GitHub Actions CI/CD:** Add `.github/workflows/` with two workflow files:
+  - `backend-ci.yml` — triggers on push and pull request to `main`; runs `black --check`, `ruff check`, `mypy`, and `pytest` against the backend. Uses `uv` for dependency installation to match the local dev environment.
+  - `frontend-ci.yml` — triggers on push and pull request to `main`; runs `npm ci` then the TypeScript compiler (`tsc --noEmit`) and ESLint. No test runner required (Jest scaffolding only at this stage).
 
-**Exit criteria:** User can type a company name or partial ticker in the Profiler benchmark field and select from a live autocomplete list. A progress wheel is visible while the Profiler analysis is loading.
+**Exit criteria:** User can type a company name or partial ticker in the Profiler benchmark field and select from a live autocomplete list. A progress wheel is visible while the Profiler analysis is loading. Both CI workflows pass on a clean push to `main`.
 
 ---
 
