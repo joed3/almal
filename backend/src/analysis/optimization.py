@@ -393,7 +393,8 @@ class PortfolioOptimizer:
 
         end_date = date.today()
         test_start = pd.to_datetime(end_date - timedelta(days=lookback_years * 365 + 5))
-        data_start = test_start - pd.Timedelta(days=365)
+        # Training buffer matches the simulation window so _get_w sees the same depth
+        data_start = test_start - pd.Timedelta(days=lookback_years * 365)
 
         all_symbols = list(set(tickers + [benchmark]))
 
@@ -465,7 +466,7 @@ class PortfolioOptimizer:
 
         def _get_w(T: pd.Timestamp) -> dict[str, float]:
             try:
-                df_est = df.loc[T - pd.Timedelta(days=365) : T]
+                df_est = df.loc[T - pd.Timedelta(days=lookback_years * 365) : T]
                 if len(df_est) < 20:
                     raise Exception("Not enough data in estimation window")
                 w, _, _ = self._compute_optimal_weights(
@@ -483,15 +484,11 @@ class PortfolioOptimizer:
                 n = len(available)
                 return {t: 1.0 / n for t in available}
 
-        # Backtest loop for Walk-Forward
-        w_bnh = _get_w(prev_day)
-        port_ret_bnh = sum(df_rets_test[t] * w_bnh.get(t, 0) for t in available)
-        bnh_cum = (1 + port_ret_bnh).cumprod()
-
+        # Walk-forward backtest loop
         port_ret_wf = pd.Series(0.0, index=df_rets_test.index)
         current_w = _get_w(prev_day)
 
-        rebalance_date_strs = [str(prev_day.date())]
+        rebalance_date_strs: list[str] = []
         reb_set = set(rebalance_dates)
 
         for d in df_rets_test.index:
@@ -537,7 +534,19 @@ class PortfolioOptimizer:
 
         port_stats = _compute_stats(port_ret_wf, port_cum)
         bench_stats = _compute_stats(bench_rets, bench_cum)
-        bnh_stats = _compute_stats(port_ret_bnh, bnh_cum)
+
+        # Buy-and-hold comparison: optimize once at the start and never rebalance.
+        # Skip for buy_and_hold cadence since it would be identical to walk-forward.
+        bah_cumulative: list[float] | None = None
+        bah_stats: BacktestStats | None = None
+        if cadence != "buy_and_hold":
+            w_bnh = _get_w(prev_day)
+            port_ret_bnh: pd.Series = sum(
+                df_rets_test[t] * w_bnh.get(t, 0) for t in available
+            )
+            bnh_cum = (1 + port_ret_bnh).cumprod()
+            bah_cumulative = [round(float(v), 4) for v in bnh_cum.to_numpy()]
+            bah_stats = _compute_stats(port_ret_bnh, bnh_cum)
 
         return BacktestResult(
             dates=dates_list,
@@ -550,8 +559,8 @@ class PortfolioOptimizer:
             strategy_used=strategy,
             stats=port_stats,
             benchmark_stats=bench_stats,
-            bah_cumulative=[round(float(v), 4) for v in bnh_cum.to_numpy()],
-            bah_stats=bnh_stats,
+            bah_cumulative=bah_cumulative,
+            bah_stats=bah_stats,
         )
 
     def _generate_frontier_curve(

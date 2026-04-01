@@ -682,10 +682,18 @@ export default function Optimizer() {
   const downloadBacktestCSV = () => {
     if (!backtestData?.result) return;
     const r = backtestData.result as BacktestResult;
+    const headers = ['Date', 'Walk-Forward Cumulative Return'];
+    if (r.bah_cumulative) headers.push('Buy & Hold Cumulative Return');
+    headers.push(`${r.benchmark} Cumulative Return`);
     downloadCSV(
       'backtest.csv',
-      ['Date', 'Portfolio Cumulative Return', `${r.benchmark} Cumulative Return`],
-      r.dates.map((d, i) => [d, r.portfolio_cumulative[i], r.benchmark_cumulative[i]]),
+      headers,
+      r.dates.map((d, i) => {
+        const row: (string | number)[] = [d, r.portfolio_cumulative[i]];
+        if (r.bah_cumulative) row.push(r.bah_cumulative[i]);
+        row.push(r.benchmark_cumulative[i]);
+        return row;
+      }),
     );
   };
 
@@ -1146,6 +1154,12 @@ export default function Optimizer() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-stone-100 dark:divide-gray-800">
+                            <tr>
+                              <td className="py-2 text-stone-500 dark:text-gray-400">Rebalances</td>
+                              <td className="py-2 text-right font-medium text-stone-900 dark:text-gray-100">{bt.rebalance_dates.length}</td>
+                              {bt.bah_stats && <td className="py-2 text-right text-stone-500 dark:text-gray-400">1</td>}
+                              <td className="py-2 text-right text-stone-500 dark:text-gray-400">—</td>
+                            </tr>
                             {[
                               { label: 'Total Return', p: (bt.stats.total_return * 100).toFixed(2) + '%', b: (bt.benchmark_stats.total_return * 100).toFixed(2) + '%', bah: bt.bah_stats ? (bt.bah_stats.total_return * 100).toFixed(2) + '%' : null },
                               { label: 'Ann. Return', p: (bt.stats.annualized_return * 100).toFixed(2) + '%', b: (bt.benchmark_stats.annualized_return * 100).toFixed(2) + '%', bah: bt.bah_stats ? (bt.bah_stats.annualized_return * 100).toFixed(2) + '%' : null },
@@ -1157,8 +1171,8 @@ export default function Optimizer() {
                               <tr key={label}>
                                 <td className="py-2 text-stone-500 dark:text-gray-400">{label}</td>
                                 <td className="py-2 text-right font-medium text-stone-900 dark:text-gray-100">{p}</td>
-                                {bah !== null && (
-                                  <td className="py-2 text-right font-medium text-stone-600 dark:text-gray-300">{bah}</td>
+                                {bt.bah_stats && (
+                                  <td className="py-2 text-right font-medium text-stone-600 dark:text-gray-300">{bah ?? '—'}</td>
                                 )}
                                 <td className="py-2 text-right text-stone-500 dark:text-gray-400">{b}</td>
                               </tr>
