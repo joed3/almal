@@ -400,3 +400,162 @@ Recorded after the Stage 4 / Stage 5 UI/UX redesign pass.
 
 ### Mobile
 - Desktop-first for now. No responsive breakpoint optimisations beyond existing grid usage.
+
+---
+
+## v2.0.0 Implementation Plan
+
+Planned after tagging v1.0.0. Builds on the stable foundation without breaking any existing features. All decisions below are informed by a product interview conducted 2026-03-31.
+
+---
+
+### Feature Overview
+
+| Feature | Priority | Description |
+|---|---|---|
+| Profiler benchmark search | Quick fix | Replace plain-text benchmark input with the same autocomplete ticker search used in Investigator and Optimizer |
+| Advanced optimizer strategies | Core | Add Black-Litterman, CVaR, Risk Parity, HRP via skfolio alongside the existing four PyPortfolioOpt strategies |
+| Advanced parameter controls | Core | Collapsible per-strategy parameter panel exposing risk-free rate, expected returns method, covariance estimator, and strategy-specific inputs |
+| Black-Litterman views UI | Core | Allow users to input their own expected return views per ticker plus a confidence level; fall back to market-implied equilibrium returns when no views are provided |
+| Natural language constraints | Core | Free-text constraint input parsed by Claude into structured optimizer constraints: position caps, position floors, portfolio reduction targets, and tax-aware sell restrictions |
+| Tax-aware optimization | Core | Factor estimated short/long-term capital gains tax liability into rebalance decisions; surface projected tax impact per ticker in the allocation output |
+| Walk-forward backtesting | Core | Replace the static historical simulation with a true walk-forward engine that re-optimizes at each rebalance date using only data available at that point; user selects rebalancing cadence or buy-and-hold |
+| Chat interface | Exploratory | Collapsible floating chat panel backed by the orchestrator; primarily natural language portfolio commands that trigger agent actions; secondarily Q&A about current results and general research |
+
+---
+
+### Design Decisions (from interview)
+
+**Constraints input:** Free-text natural language, parsed by a new `ConstraintParserAgent` (Claude-backed). Supports: max weight per ticker, min weight or min shares per ticker, reduce total portfolio by $ or %, tax-minimizing hold preferences. When the parser is uncertain (ambiguous input), it asks a clarifying question before rendering any chips — the user responds inline and the parse resumes. Parsed constraints are rendered back to the user as structured tags before the optimization runs, so they can review and remove individual constraints before confirming.
+
+**Capital gains awareness:** The optimizer uses lot-level `purchase_date` and `cost_basis` data already present in the CSV parser. For each potential sale, it calculates estimated tax liability using US federal capital gains rates as defaults: short-term (held ≤ 1 year) at 22% (middle bracket), long-term (held > 1 year) at 15% (standard rate). Both rates are user-editable via a small input in the tax-aware panel, so users can enter their actual marginal rates. Tax cost is added as a soft penalty in the objective function — the user can toggle its weight from 0 (ignore taxes) to 1.0 (strongly prefer tax-efficient trades). The allocation output gains a "Est. Tax Impact" column.
+
+**Advanced strategies:** All eight strategies (four existing PyPortfolioOpt + four new skfolio) appear in the same selector. Each strategy has an expandable "Advanced Details" accordion below the selector. Default parameters are sane out-of-the-box; the accordion is optional. Strategy groupings:
+- *Conservative:* Min Volatility, Risk Parity
+- *Moderate:* Max Sharpe, Regularized Max Sharpe, CVaR Minimization
+- *Aggressive:* Max Return, Hierarchical Risk Parity
+- *Views-based:* Black-Litterman (requires market data + optional user views)
+
+**Black-Litterman views:** User can add one or more views via a small form: ticker, expected return (%), confidence (low / medium / high → maps to Ω diagonal values). Views are optional; if none are provided, the model uses market-cap-weighted equilibrium returns derived from a configurable market index proxy (default: SPY; changeable in the Advanced Details accordion). The Advanced Details panel shows the implied equilibrium returns alongside the user's views so they can sanity-check.
+
+**Walk-forward backtesting:** Replaces the current static simulation entirely. The user chooses a lookback window (1Y, 3Y, 5Y) and a rebalancing cadence (monthly, quarterly, annual, or buy-and-hold). At each rebalance date, the optimizer runs on historical data up to that point only — no future data leaks. The output chart shows the walk-forward portfolio vs. benchmark. A summary table compares walk-forward stats to the buy-and-hold equivalent. The Review Agent caveat note is preserved. Because monthly rebalancing over 5 years ≈ 60 optimization runs, a progress bar is shown during the backtest computation so the user can see how many rebalance periods have been processed.
+
+**Chat interface:** A floating collapsible panel anchored bottom-right (above the FAB). Collapsed state is a small chat icon; expanded state is a ~360px wide panel. The orchestrator receives a message enriched with current page context: loaded portfolio, current result payload (if any), and which page the user is on. Primary capability is command-style queries that can trigger agent actions and show results inline in the chat (e.g. "optimize my portfolio for minimum volatility" runs the optimizer and streams results back). Secondary capability is Q&A about the current result. Conversation history is session-scoped (cleared on page reload). No streaming required for v2 — standard request/response is fine.
+
+**Profiler benchmark search:** Direct drop-in replacement of the plain text input with the same autocomplete component used in Investigator and Optimizer. No other changes to the Profiler page.
+
+---
+
+### Stage 10 — Quick Fixes
+
+Fast, isolated improvements that don't depend on any other v2 work.
+
+- **Profiler benchmark autocomplete:** Replace the freeform benchmark text input with the `/market/search`-backed autocomplete dropdown, matching the UX in Investigator and Optimizer. Chip-based multi-select is already in place; only the input mechanism changes.
+- **Profiler loading indicator:** Add a spinner/progress wheel to the Profiler results panel while the analysis is running, matching the loading state already present in the Optimizer panel. No backend changes required — frontend-only state management.
+
+**Exit criteria:** User can type a company name or partial ticker in the Profiler benchmark field and select from a live autocomplete list. A progress wheel is visible while the Profiler analysis is loading.
+
+---
+
+### Stage 11 — Advanced Optimizer Strategies + Parameter Controls
+
+Extend the optimizer with skfolio strategies and expose per-strategy parameter controls in the UI.
+
+**Backend:**
+- Implement `skfolio` wrappers in `analysis/optimization.py`: Black-Litterman (with market-implied + optional user views), CVaR minimization, Equal Risk Contribution (Risk Parity), and Hierarchical Risk Parity (HRP)
+- Extend `OptimizeRequest` with optional `advanced_params` dict (risk-free rate, expected returns method, covariance estimator, CVaR beta, risk parity risk measure, BL views list, BL tau)
+- Add `views` list to `OptimizeRequest` for Black-Litterman: `[{ ticker, expected_return, confidence }]`
+- `OptimizationStrategy` enum gains four new values: `black_litterman`, `cvar`, `risk_parity`, `hrp`
+
+**Frontend:**
+- Extend strategy `<select>` with the four new options, grouped by risk profile
+- Each strategy option in the selector has an info icon (`InfoPopover`) that renders a 1–2 sentence plain-English description of the strategy and links out to a reputable external reference (Wikipedia article or academic/practitioner source). Popovers are present for all eight strategies (four existing + four new). Reference links per strategy:
+  - Min Volatility → [Wikipedia: Modern portfolio theory](https://en.wikipedia.org/wiki/Modern_portfolio_theory)
+  - Max Sharpe → [Wikipedia: Sharpe ratio](https://en.wikipedia.org/wiki/Sharpe_ratio)
+  - Max Return → same Modern portfolio theory article
+  - Regularized Max Sharpe → PyPortfolioOpt docs / Ledoit-Wolf shrinkage
+  - Risk Parity / ERC → [Wikipedia: Risk parity](https://en.wikipedia.org/wiki/Risk_parity)
+  - CVaR Minimization → [Wikipedia: Expected shortfall](https://en.wikipedia.org/wiki/Expected_shortfall)
+  - HRP → [Lopez de Prado (2016)](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2708678)
+  - Black-Litterman → [Wikipedia: Black–Litterman model](https://en.wikipedia.org/wiki/Black%E2%80%93Litterman_model)
+- Add an `AdvancedParams` accordion component below the strategy selector — rendered conditionally per strategy, showing only the parameters relevant to the selected strategy
+- Black-Litterman strategy additionally shows a "Views" panel: add/remove rows of (ticker, expected return %, confidence)
+- Market-implied equilibrium returns fetched and displayed alongside user views when BL is selected
+- Black-Litterman market proxy selector (default: SPY) exposed in the Advanced Details accordion; user can change to any valid ticker
+
+**Exit criteria:** All eight strategies are selectable. Black-Litterman runs with market-implied returns when no views are entered, and incorporates user views when provided. Advanced parameters override defaults when changed.
+
+---
+
+### Stage 12 — Natural Language Constraints + Tax-Aware Optimization
+
+Add the constraint layer on top of the optimizer, including capital gains awareness.
+
+**Backend:**
+- New `ConstraintParserAgent` in `agents/constraint_parser.py`: accepts a free-text string and the current portfolio (tickers + lots), returns a structured `ConstraintSet` (Pydantic model). Claude parses statements like "keep at least 50 shares of AAPL", "no position larger than 15%", "reduce total portfolio by $10,000", "avoid selling positions held less than 6 months"
+- `ConstraintSet` model: `max_weights: dict[str, float]`, `min_weights: dict[str, float]`, `min_shares: dict[str, float]`, `portfolio_reduction_target: float | None` (in dollars), `tax_aware: bool`, `tax_aware_weight: float`
+- New `POST /optimize/parse-constraints` endpoint: calls ConstraintParserAgent, returns the parsed `ConstraintSet` for frontend preview before the user confirms
+- Extend `PortfolioOptimizer.optimize()` to accept and apply a `ConstraintSet`: inject weight bounds into PyPortfolioOpt/skfolio, apply portfolio reduction logic to total value calculation
+- Tax-aware mode: for each potential sale, compute estimated tax liability from lot-level data; add a weighted tax-cost penalty to the objective function. Configurable rates stored in `config/settings.py` (`short_term_tax_rate`, `long_term_tax_rate`)
+- Extend `AllocationRequirement` with `est_tax_impact: float | None` and `holding_days: int | None`
+
+**Frontend:**
+- Add a "Constraints" section to the Optimizer configuration panel (below principal, above strategy selector)
+- Free-text input with a "Parse" button; on parse, renders structured constraint chips (each dismissable) showing the interpreted constraint in plain English
+- "Tax-aware" toggle (enabled automatically if portfolio has lot data; greyed out if not)
+- Tax weight slider: 0 (ignore) → 1 (strongly prefer tax efficiency); shown only when tax-aware is on
+- Allocation table gains "Est. Tax" and "Held" columns when tax-aware mode is active
+
+**Exit criteria:** User can type "don't sell more than half my MSFT" and see it parsed into a min-shares constraint chip. Running the optimizer with tax-aware on produces a different allocation than without, and the allocation table shows estimated tax per position.
+
+---
+
+### Stage 13 — Walk-Forward Backtesting
+
+Replace the current static weight simulation with a true rolling re-optimization engine.
+
+**Backend:**
+- New `run_walk_forward_backtest()` method on `PortfolioOptimizer` (or a dedicated `WalkForwardBacktester` class)
+- Algorithm: given a lookback window and rebalance cadence, iterate through time. At each rebalance date, fetch price data up to that date only, run the optimization, hold the resulting weights until the next rebalance date, compute portfolio return for that interval. Accumulate portfolio value series. No future data ever enters any optimization step.
+- Buy-and-hold mode: optimize once on the first available window, then hold static weights for the entire period — produces a useful comparison baseline
+- Extend `BacktestResult` with `rebalance_dates: list[str]`, `rebalance_cadence: str`, `strategy_used: str`
+- Extend `BacktestRequest` with `cadence: Literal["monthly", "quarterly", "annual", "buy_and_hold"]`
+- `POST /optimize/backtest` updated to use the new engine; old static simulation removed
+
+**Frontend:**
+- Replace the current 1Y/3Y/5Y + "Run Backtest" UI with a panel that exposes: lookback window (1Y / 3Y / 5Y), rebalancing cadence (Monthly / Quarterly / Annual / Buy & Hold)
+- Rebalance dates shown as vertical markers on the cumulative return chart (dashed lines)
+- Stats table gains a "Rebalance events" count row
+- Buy-and-hold mode still appears as a toggle for direct comparison — when selected, the chart shows both walk-forward and buy-and-hold on the same axes
+
+**Exit criteria:** Walk-forward backtest produces materially different results from a static weight backtest on the same data. Rebalance date markers are visible on the chart. Buy-and-hold can be compared directly alongside the walk-forward line.
+
+---
+
+### Stage 14 — Chat Interface
+
+Add the floating chat panel backed by the orchestrator.
+
+**Backend:**
+- New `POST /chat` endpoint accepting `{ message: str, context: ChatContext }`
+- `ChatContext` carries: `page: str`, `portfolio: Portfolio | None`, `current_result: dict | None` (the last result payload from whichever page is active)
+- A new `ChatAgent` (or extend `OrchestratorAgent`) that: (1) inspects the context, (2) classifies the message as a command (triggers an agent action and returns structured + narrative result), a question about the current result (calls ReviewAgent with the result + question), or a general research query (calls ResearchAgent)
+- Command routing examples: "optimize my portfolio for minimum volatility" → triggers optimize with current portfolio + strategy override, returns full `OptimizeResult`; "what's the correlation between AAPL and NVDA?" → triggers ResearchAgent
+- Response model: `{ narrative: str, action_result: dict | None, suggested_next: str | None }` — `action_result` is non-null when the chat triggered an agent action and can be rendered as a result card inline
+- Session history is maintained server-side in a short-lived dict keyed by a session token (generated client-side, stored in `sessionStorage`); last 10 exchanges kept for context
+
+**Frontend:**
+- New `ChatPanel.tsx` component: fixed bottom-right, above the FAB, initially collapsed to a circular icon button
+- Expanded state: 360×520px panel with message history, text input, send button, and a "Clear" button
+- Messages from the assistant can render either plain text or, when `action_result` is present, an inline compact result card (e.g. a mini allocation table or a mini metrics summary)
+- Context is assembled at send time from `AppContext` (current portfolio, last results for the active page)
+- The panel is always mounted but collapsed; no route changes required
+
+**Exit criteria:** User can type "what would my portfolio look like optimized for max Sharpe?" in the chat panel and receive a narrative response plus a compact allocation result card, without leaving the current page.
+
+---
+
+### v2.0.0 Open Questions
+
+- **Chat streaming:** v2 uses standard request/response. Streaming (SSE or WebSockets) would improve UX significantly for longer responses — candidate for v2.1.
+- **Chat result cards:** The design for inline result cards in the chat panel (mini allocation table, mini metrics card) needs detailed UI work before Stage 14 begins.

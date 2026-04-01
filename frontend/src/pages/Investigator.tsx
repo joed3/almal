@@ -6,6 +6,8 @@ import NarrativeBlock from '../components/NarrativeBlock';
 import type { Portfolio } from '../utils/csv';
 import { useAppContext } from '../context/AppContext';
 import { useTheme } from '../context/ThemeContext';
+import { downloadCSV } from '../utils/export';
+import { exportInvestigatorHTML } from '../utils/exportHTML';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot = (_Plot as any).default ?? _Plot;
@@ -125,6 +127,32 @@ export default function Investigator() {
   // Local Loading/Error state
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+
+  const downloadTickerCSV = () => {
+    if (!analysisResult || !selectedTicker) return;
+    const info = analysisResult.info;
+    downloadCSV(
+      `${selectedTicker}_analysis.csv`,
+      ['Field', 'Value'],
+      [
+        ['Ticker', selectedTicker],
+        ['Name', info.name ?? ''],
+        ['Sector', info.sector ?? ''],
+        ['Industry', info.industry ?? ''],
+        ['Current Price', info.current_price?.toFixed(2) ?? ''],
+        ['Market Cap', info.market_cap ?? ''],
+        ['P/E Ratio', info.pe_ratio?.toFixed(2) ?? ''],
+        ['Dividend Yield', info.dividend_yield ? (info.dividend_yield * 100).toFixed(2) + '%' : ''],
+        ['52W High', info.week_52_high?.toFixed(2) ?? ''],
+        ['52W Low', info.week_52_low?.toFixed(2) ?? ''],
+        ['Total Return (1Y)', (analysisResult.performance.total_return * 100).toFixed(2) + '%'],
+        ['Annualized Return', (analysisResult.performance.annualized_return * 100).toFixed(2) + '%'],
+        ['Volatility', (analysisResult.performance.volatility * 100).toFixed(2) + '%'],
+        ['Sharpe Ratio', analysisResult.performance.sharpe_ratio.toFixed(2)],
+        ['Max Drawdown', (analysisResult.performance.max_drawdown * 100).toFixed(2) + '%'],
+      ],
+    );
+  };
 
   // Plotly theme colors
   const gridcolor = isDark ? '#374151' : '#e5e7eb';
@@ -413,6 +441,26 @@ export default function Investigator() {
                       ${analysisResult.info.current_price?.toFixed(2) ?? 'N/A'}
                     </p>
                     <p className="text-stone-500 dark:text-gray-400 mt-1">Current Price</p>
+                    <div className="flex items-center gap-3 mt-2 ml-auto">
+                      <button
+                        onClick={downloadTickerCSV}
+                        className="flex items-center gap-1.5 text-xs text-stone-500 dark:text-gray-400 hover:text-stone-800 dark:hover:text-gray-200 transition-colors"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        CSV
+                      </button>
+                      <button
+                        onClick={() => exportInvestigatorHTML(analysisResult, selectedTicker!, analysisNarrative)}
+                        className="flex items-center gap-1.5 text-xs font-medium text-stone-500 dark:text-gray-400 hover:text-stone-800 dark:hover:text-gray-200 border border-stone-200 dark:border-gray-700 rounded-md px-2.5 py-1 transition-colors"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        Export HTML
+                      </button>
+                    </div>
                   </div>
                 </div>
 

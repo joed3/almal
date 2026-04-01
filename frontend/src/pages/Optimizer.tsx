@@ -3,9 +3,12 @@ import { useState, useRef } from 'react';
 import { useAppContext } from '../context/AppContext';
 import type { OptimizationStrategy } from '../context/AppContext';
 import AllocationTable from '../components/AllocationTable';
+import BacktestChart from '../components/BacktestChart';
 import EfficientFrontierChart from '../components/EfficientFrontierChart';
 import InfoPopover from '../components/InfoPopover';
 import NarrativeBlock from '../components/NarrativeBlock';
+import { downloadCSV } from '../utils/export';
+import { exportOptimizerHTML } from '../utils/exportHTML';
 
 interface SearchResult {
   symbol: string;
@@ -26,6 +29,32 @@ interface OptimizeResponse {
   error?: string;
 }
 
+interface BacktestStats {
+  total_return: number;
+  annualized_return: number;
+  annual_volatility: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  calmar_ratio: number;
+}
+
+interface BacktestResult {
+  dates: string[];
+  portfolio_cumulative: number[];
+  benchmark_cumulative: number[];
+  benchmark: string;
+  lookback_years: number;
+  stats: BacktestStats;
+  benchmark_stats: BacktestStats;
+}
+
+interface BacktestResponse {
+  success: boolean;
+  result?: BacktestResult;
+  narrative?: string;
+  error?: string;
+}
+
 export default function Optimizer() {
   const {
     portfolio, setPortfolio,
@@ -34,12 +63,18 @@ export default function Optimizer() {
     optimizerStrategy: strategy, setOptimizerStrategy: setStrategy,
     optimizerRebalanceMode: rebalanceMode, setOptimizerRebalanceMode: setRebalanceMode,
     optimizerResult: result, setOptimizerResult: setResult,
+    optimizerBacktestResult: backtestData, setOptimizerBacktestResult: setBacktestData,
   } = useAppContext();
 
   // UI local state
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Backtest state
+  const [backtestLoading, setBacktestLoading] = useState(false);
+  const [backtestError, setBacktestError] = useState<string | null>(null);
+  const [backtestYears, setBacktestYears] = useState(3);
 
   // Search local state
   const [searchQuery, setSearchQuery] = useState('');
@@ -149,6 +184,7 @@ export default function Optimizer() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setBacktestData(null);
 
     try {
       const res = await fetch('http://127.0.0.1:8100/optimize', {
@@ -172,6 +208,64 @@ export default function Optimizer() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const runBacktest = async () => {
+    if (!result) return;
+    // Build weights map from the current result's allocations
+    const weights: Record<string, number> = {};
+    for (const alloc of result.result.allocations) {
+      if (alloc.weight > 0) weights[alloc.ticker] = alloc.weight;
+    }
+    const tickers = Object.keys(weights);
+    if (tickers.length === 0) return;
+
+    setBacktestLoading(true);
+    setBacktestError(null);
+    setBacktestData(null);
+
+    try {
+      const res = await fetch('http://127.0.0.1:8100/optimize/backtest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tickers, weights, benchmark: 'SPY', lookback_years: backtestYears }),
+      });
+      const data: BacktestResponse = await res.json();
+      if (!data.success || !data.result) {
+        throw new Error(data.error || 'Backtest failed');
+      }
+      setBacktestData(data);
+    } catch (err: any) {
+      setBacktestError(err.message);
+    } finally {
+      setBacktestLoading(false);
+    }
+  };
+
+  const downloadAllocationCSV = () => {
+    if (!result) return;
+    downloadCSV(
+      'allocation.csv',
+      ['Ticker', 'Target Weight (%)', 'Current Shares', 'Target Shares', 'Delta', 'Capital ($)'],
+      result.result.allocations.map((a: any) => [
+        a.ticker,
+        (a.weight * 100).toFixed(2),
+        a.current_shares,
+        a.target_shares,
+        a.shares_delta,
+        a.target_dollars.toFixed(2),
+      ]),
+    );
+  };
+
+  const downloadBacktestCSV = () => {
+    if (!backtestData?.result) return;
+    const r = backtestData.result as BacktestResult;
+    downloadCSV(
+      'backtest.csv',
+      ['Date', 'Portfolio Cumulative Return', `${r.benchmark} Cumulative Return`],
+      r.dates.map((d, i) => [d, r.portfolio_cumulative[i], r.benchmark_cumulative[i]]),
+    );
   };
 
   return (
@@ -387,6 +481,18 @@ export default function Optimizer() {
           {!loading && result && (
             <div className="space-y-6 animate-fadeIn flex flex-col">
 
+              <div className="flex justify-end">
+                <button
+                  onClick={() => exportOptimizerHTML(result, backtestData)}
+                  className="flex items-center gap-1.5 text-xs font-medium text-stone-500 dark:text-gray-400 hover:text-stone-800 dark:hover:text-gray-200 border border-stone-200 dark:border-gray-700 rounded-md px-3 py-1.5 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Export HTML
+                </button>
+              </div>
+
               <div className="grid grid-cols-3 gap-4">
                 <div className="bg-white dark:bg-gray-900 border border-stone-200 dark:border-gray-700 rounded-lg p-4">
                   <div className="text-sm text-stone-500 dark:text-gray-400 mb-1 flex items-center gap-1">
@@ -441,6 +547,17 @@ export default function Optimizer() {
                   allocations={result.result.allocations}
                   leftoverCash={result.result.leftover_cash}
                 />
+                <div className="flex justify-end mt-2">
+                  <button
+                    onClick={downloadAllocationCSV}
+                    className="flex items-center gap-1.5 text-xs text-stone-500 dark:text-gray-400 hover:text-stone-800 dark:hover:text-gray-200 transition-colors"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Download CSV
+                  </button>
+                </div>
               </div>
 
               {result.narrative && (
@@ -448,6 +565,114 @@ export default function Optimizer() {
                   <NarrativeBlock narrative={result.narrative} title="AI Critic Review" />
                 </div>
               )}
+
+              {/* Backtest section */}
+              <div className="order-5 bg-white dark:bg-gray-900 rounded-lg p-5 border border-stone-200 dark:border-gray-700">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold text-stone-900 dark:text-white">Historical Backtest</h2>
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1 text-sm">
+                      {[1, 3, 5].map((yr) => (
+                        <button
+                          key={yr}
+                          onClick={() => { setBacktestYears(yr); setBacktestData(null); }}
+                          className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                            backtestYears === yr
+                              ? 'bg-stone-200 dark:bg-gray-700 text-stone-900 dark:text-white'
+                              : 'text-stone-500 dark:text-gray-400 hover:bg-stone-100 dark:hover:bg-gray-800'
+                          }`}
+                        >
+                          {yr}Y
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={runBacktest}
+                      disabled={backtestLoading}
+                      className="bg-stone-800 dark:bg-gray-100 hover:bg-stone-700 dark:hover:bg-white text-white dark:text-gray-900 text-xs font-semibold px-3 py-1.5 rounded transition-colors disabled:opacity-50"
+                    >
+                      {backtestLoading ? 'Running…' : 'Run Backtest'}
+                    </button>
+                  </div>
+                </div>
+
+                {backtestError && (
+                  <p className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 rounded px-3 py-2">
+                    {backtestError}
+                  </p>
+                )}
+
+                {backtestLoading && (
+                  <div className="flex justify-center py-12">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
+                  </div>
+                )}
+
+                {!backtestLoading && !backtestData && !backtestError && (
+                  <p className="text-sm text-stone-400 dark:text-gray-500 text-center py-8">
+                    Apply the optimized weights to historical data to see how this portfolio would have performed.
+                  </p>
+                )}
+
+                {!backtestLoading && backtestData?.result && (() => {
+                  const bt = backtestData.result as BacktestResult;
+                  return (
+                    <div className="space-y-5">
+                      <BacktestChart
+                        dates={bt.dates}
+                        portfolioCumulative={bt.portfolio_cumulative}
+                        benchmarkCumulative={bt.benchmark_cumulative}
+                        benchmark={bt.benchmark}
+                      />
+
+                      {/* Stats table */}
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-xs text-stone-500 dark:text-gray-400 border-b border-stone-200 dark:border-gray-700">
+                              <th className="text-left py-2 font-medium">Metric</th>
+                              <th className="text-right py-2 font-medium">Portfolio</th>
+                              <th className="text-right py-2 font-medium">{bt.benchmark}</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-stone-100 dark:divide-gray-800">
+                            {[
+                              { label: 'Total Return', p: (bt.stats.total_return * 100).toFixed(2) + '%', b: (bt.benchmark_stats.total_return * 100).toFixed(2) + '%' },
+                              { label: 'Ann. Return', p: (bt.stats.annualized_return * 100).toFixed(2) + '%', b: (bt.benchmark_stats.annualized_return * 100).toFixed(2) + '%' },
+                              { label: 'Ann. Volatility', p: (bt.stats.annual_volatility * 100).toFixed(2) + '%', b: (bt.benchmark_stats.annual_volatility * 100).toFixed(2) + '%' },
+                              { label: 'Sharpe Ratio', p: bt.stats.sharpe_ratio.toFixed(2), b: bt.benchmark_stats.sharpe_ratio.toFixed(2) },
+                              { label: 'Max Drawdown', p: (bt.stats.max_drawdown * 100).toFixed(2) + '%', b: (bt.benchmark_stats.max_drawdown * 100).toFixed(2) + '%' },
+                              { label: 'Calmar Ratio', p: bt.stats.calmar_ratio.toFixed(2), b: bt.benchmark_stats.calmar_ratio.toFixed(2) },
+                            ].map(({ label, p, b }) => (
+                              <tr key={label}>
+                                <td className="py-2 text-stone-500 dark:text-gray-400">{label}</td>
+                                <td className="py-2 text-right font-medium text-stone-900 dark:text-gray-100">{p}</td>
+                                <td className="py-2 text-right text-stone-500 dark:text-gray-400">{b}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex justify-end">
+                        <button
+                          onClick={downloadBacktestCSV}
+                          className="flex items-center gap-1.5 text-xs text-stone-500 dark:text-gray-400 hover:text-stone-800 dark:hover:text-gray-200 transition-colors"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                          Download Backtest CSV
+                        </button>
+                      </div>
+
+                      {backtestData.narrative && (
+                        <NarrativeBlock narrative={backtestData.narrative} title="Backtest Note" />
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
 
             </div>
           )}

@@ -1,13 +1,26 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from src.agents.orchestrator import OrchestratorAgent
+from src.agents.review import ReviewAgent
 from src.agents.types import AgentIntent, AgentRequest, AgentResponse
-from src.models.optimizer import OptimizeRequest
+from src.analysis.optimization import PortfolioOptimizer
+from src.models.optimizer import BacktestRequest, BacktestResult, OptimizeRequest
 
 router = APIRouter(prefix="/optimize", tags=["optimizer"])
 
 # Initialize exactly one orchestrator for this router module
 _orchestrator = OrchestratorAgent()
+_review_agent = ReviewAgent()
+
+
+class BacktestResponse(BaseModel):
+    """Response from the backtest endpoint."""
+
+    success: bool
+    result: BacktestResult | None = None
+    narrative: str | None = None
+    error: str | None = None
 
 
 @router.post("", response_model=AgentResponse)
@@ -35,3 +48,46 @@ async def optimize_portfolio(request: OptimizeRequest) -> AgentResponse:
             detail=response.error or "Failed to optimize portfolio.",
         )
     return response
+
+
+@router.post("/backtest", response_model=BacktestResponse)
+async def run_backtest(request: BacktestRequest) -> BacktestResponse:
+    """Run a historical backtest simulation for a set of optimized weights.
+
+    Applies the provided weights statically to the historical price data over the
+    requested lookback window and computes cumulative returns, annualized return,
+    volatility, Sharpe ratio, max drawdown, and Calmar ratio vs. the benchmark.
+
+    Args:
+        request: A BacktestRequest containing tickers, weights, benchmark, and window.
+
+    Returns:
+        A BacktestResponse with the simulation results and a Review Agent caveat note.
+    """
+    optimizer = PortfolioOptimizer()
+    try:
+        result = optimizer.run_backtest(
+            tickers=request.tickers,
+            weights=request.weights,
+            benchmark=request.benchmark,
+            lookback_years=request.lookback_years,
+        )
+    except ValueError as e:
+        return BacktestResponse(success=False, error=str(e))
+    except Exception as e:
+        return BacktestResponse(success=False, error=f"Backtest failed: {e}")
+
+    # Get Review Agent caveat note
+    narrative: str | None = None
+    try:
+        review_req = AgentRequest(
+            intent=AgentIntent.OPTIMIZE_PORTFOLIO,
+            payload={"profile_result": result.model_dump(), "context": "backtest"},
+        )
+        review_resp = await _review_agent.run(review_req)
+        if review_resp.success:
+            narrative = review_resp.narrative
+    except Exception:
+        pass  # narrative is optional
+
+    return BacktestResponse(success=True, result=result, narrative=narrative)

@@ -1,5 +1,6 @@
 import logging
 from datetime import date, timedelta
+from math import sqrt
 
 import pandas as pd
 from pypfopt import expected_returns, objective_functions, risk_models
@@ -9,6 +10,8 @@ from pypfopt.efficient_frontier import EfficientFrontier
 from src.data.market import market_client
 from src.models.optimizer import (
     AllocationRequirement,
+    BacktestResult,
+    BacktestStats,
     EfficientFrontierPoint,
     OptimizationMetrics,
     OptimizationStrategy,
@@ -176,6 +179,102 @@ class PortfolioOptimizer:
             metrics=metrics,
             frontier_curve=curve_points,
             leftover_cash=leftover,
+        )
+
+    def run_backtest(
+        self,
+        tickers: list[str],
+        weights: dict[str, float],
+        benchmark: str = "SPY",
+        lookback_years: int = 3,
+    ) -> BacktestResult:
+        """Apply static optimized weights to historical data and measure performance.
+
+        Args:
+            tickers: Tickers present in the weights dict.
+            weights: Normalized weight map (ticker -> float, should sum to ~1).
+            benchmark: Benchmark ticker to compare against.
+            lookback_years: Number of years of historical data to use.
+
+        Returns:
+            A BacktestResult containing cumulative returns and summary stats.
+        """
+        end_date = date.today()
+        start_date = end_date - timedelta(days=lookback_years * 365 + 5)
+
+        active_tickers = [t for t in tickers if weights.get(t, 0) > 0]
+        all_symbols = list(set(active_tickers + [benchmark]))
+
+        price_series: dict[str, pd.Series] = {}
+        for symbol in all_symbols:
+            try:
+                history = market_client.fetch_price_history(
+                    symbol, start_date, end_date
+                )
+                if history.bars:
+                    closes = [bar.close for bar in history.bars]
+                    dates_idx = [pd.to_datetime(bar.date) for bar in history.bars]
+                    price_series[symbol] = pd.Series(closes, index=dates_idx)
+            except Exception as e:
+                logger.warning(f"Backtest: failed to fetch {symbol}: {e}")
+
+        available = [t for t in active_tickers if t in price_series]
+        if not available or benchmark not in price_series:
+            raise ValueError("Could not fetch sufficient price data for backtest.")
+
+        raw_weights = {t: weights[t] for t in available}
+        total_w = sum(raw_weights.values())
+        norm_weights = {t: w / total_w for t, w in raw_weights.items()}
+
+        df = pd.DataFrame({t: price_series[t] for t in available}).dropna()
+        bench_series = price_series[benchmark].reindex(df.index).ffill()
+
+        if len(df) < 20:
+            raise ValueError("Insufficient overlapping price data for backtest.")
+
+        daily_rets = df.pct_change().dropna()
+        bench_rets = bench_series.pct_change().dropna()
+        daily_rets, bench_rets = daily_rets.align(bench_rets, join="inner", axis=0)
+
+        port_daily: pd.Series = sum(
+            daily_rets[t] * norm_weights[t] for t in available if t in daily_rets
+        )
+
+        port_cum = (1 + port_daily).cumprod()
+        bench_cum = (1 + bench_rets).cumprod()
+
+        dates_list = [str(d.date()) for d in port_cum.index]
+
+        def _compute_stats(daily: pd.Series, cum: pd.Series) -> BacktestStats:
+            n = len(daily)
+            total_ret = float(cum.iloc[-1] - 1)
+            ann_ret = float((1 + total_ret) ** (252 / n) - 1)
+            ann_vol = float(daily.std() * sqrt(252))
+            sharpe = (ann_ret - self.risk_free_rate) / ann_vol if ann_vol > 0 else 0.0
+            running_max = cum.cummax()
+            drawdowns = (cum - running_max) / running_max
+            max_dd = float(drawdowns.min())
+            calmar = ann_ret / abs(max_dd) if max_dd != 0 else 0.0
+            return BacktestStats(
+                total_return=round(total_ret, 4),
+                annualized_return=round(ann_ret, 4),
+                annual_volatility=round(ann_vol, 4),
+                sharpe_ratio=round(sharpe, 3),
+                max_drawdown=round(max_dd, 4),
+                calmar_ratio=round(calmar, 3),
+            )
+
+        port_stats = _compute_stats(port_daily, port_cum)
+        bench_stats = _compute_stats(bench_rets, bench_cum)
+
+        return BacktestResult(
+            dates=dates_list,
+            portfolio_cumulative=[round(float(v), 4) for v in port_cum.to_numpy()],
+            benchmark_cumulative=[round(float(v), 4) for v in bench_cum.to_numpy()],
+            benchmark=benchmark,
+            lookback_years=lookback_years,
+            stats=port_stats,
+            benchmark_stats=bench_stats,
         )
 
     def _generate_frontier_curve(

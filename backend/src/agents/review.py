@@ -77,6 +77,25 @@ VERDICT: [STRONG | MODERATE | WEAK]
 Be direct and quantitative. Use the actual numbers. Stay under 250 words.\
 """
 
+BACKTEST_CAVEAT_SYSTEM_PROMPT = """\
+You are a quantitative analyst reviewing a backtested portfolio strategy. \
+Respond in under 200 words. Start with VERDICT on the first line.
+
+VERDICT: [STRONG | MODERATE | WEAK]
+
+**Performance**
+1-2 sentences comparing the portfolio's backtest return and Sharpe vs. the benchmark.
+
+**Caveats**
+- **Look-ahead bias:** weights were optimized on recent data, then applied historically.
+- **Estimation window:** results are sensitive to the historical period chosen.
+- **[Observed risk]:** any specific concern from the numbers (e.g. low Sharpe, high\
+  drawdown).
+
+Be direct. Use the actual numbers. Remind the reader that past performance \
+does not guarantee future results. Stay under 200 words.\
+"""
+
 
 class ReviewAgent(BaseAgent):
     """Critiques portfolio proposals and investment ideas using Claude."""
@@ -109,6 +128,8 @@ class ReviewAgent(BaseAgent):
             system_prompt = INVESTMENT_CRITIQUE_SYSTEM_PROMPT
         elif context == "optimization":
             system_prompt = OPTIMIZATION_CRITIQUE_SYSTEM_PROMPT
+        elif context == "backtest":
+            system_prompt = BACKTEST_CAVEAT_SYSTEM_PROMPT
         else:
             system_prompt = PORTFOLIO_CRITIQUE_SYSTEM_PROMPT
 

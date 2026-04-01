@@ -5,6 +5,8 @@ import NarrativeBlock from '../components/NarrativeBlock';
 import { useAppContext } from '../context/AppContext';
 import { useTheme } from '../context/ThemeContext';
 import type { Horizon } from '../context/AppContext';
+import { downloadCSV } from '../utils/export';
+import { exportProfilerHTML } from '../utils/exportHTML';
 
 // react-plotly.js is CJS; in Vite dev the namespace object is returned instead
 // of the component directly — unwrap .default if needed.
@@ -136,6 +138,15 @@ export default function PortfolioProfiler() {
   const [apiError, setApiError] = useState<string | null>(null);
 
   const [weightSortAsc, setWeightSortAsc] = useState(false);
+
+  const downloadProfileCSV = () => {
+    if (!result) return;
+    downloadCSV(
+      'portfolio_profile.csv',
+      ['Ticker', 'Market Value ($)', 'Weight (%)'],
+      result.weights.map((w) => [w.ticker, w.market_value.toFixed(2), (w.weight * 100).toFixed(2)]),
+    );
+  };
 
   // Plotly theme colors
   const gridcolor = isDark ? '#374151' : '#e5e7eb';
@@ -393,6 +404,17 @@ export default function PortfolioProfiler() {
       {/* Results */}
       {result && (
         <div className="space-y-8">
+          <div className="flex justify-end">
+            <button
+              onClick={() => exportProfilerHTML(result)}
+              className="flex items-center gap-1.5 text-xs font-medium text-stone-500 dark:text-gray-400 hover:text-stone-800 dark:hover:text-gray-200 border border-stone-200 dark:border-gray-700 rounded-md px-3 py-1.5 transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Export HTML
+            </button>
+          </div>
           {/* Metrics cards */}
           <div className="flex flex-wrap gap-3">
             <MetricCard
@@ -494,10 +516,19 @@ export default function PortfolioProfiler() {
 
           {/* Holdings weight table */}
           <div className="bg-white dark:bg-gray-900 rounded-lg overflow-hidden border border-stone-200 dark:border-gray-800">
-            <div className="px-4 py-3 border-b border-stone-200 dark:border-gray-800">
+            <div className="px-4 py-3 border-b border-stone-200 dark:border-gray-800 flex items-center justify-between">
               <h2 className="text-sm font-medium text-stone-600 dark:text-gray-300 uppercase tracking-wide">
                 Holdings Weights
               </h2>
+              <button
+                onClick={downloadProfileCSV}
+                className="flex items-center gap-1.5 text-xs text-stone-500 dark:text-gray-400 hover:text-stone-800 dark:hover:text-gray-200 transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Download CSV
+              </button>
             </div>
             <table className="w-full text-sm">
               <thead>

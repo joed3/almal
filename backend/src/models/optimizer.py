@@ -66,3 +66,35 @@ class OptimizeResult(BaseModel):
     metrics: OptimizationMetrics
     frontier_curve: list[EfficientFrontierPoint]
     leftover_cash: float
+
+
+class BacktestRequest(BaseModel):
+    """Request payload for the backtest endpoint."""
+
+    tickers: list[str] = Field(..., min_length=1)
+    weights: dict[str, float] = Field(..., description="Optimized weights per ticker.")
+    benchmark: str = Field(default="SPY", description="Benchmark ticker symbol.")
+    lookback_years: int = Field(default=3, ge=1, le=10)
+
+
+class BacktestStats(BaseModel):
+    """Summary statistics for a backtest or benchmark series."""
+
+    total_return: float
+    annualized_return: float
+    annual_volatility: float
+    sharpe_ratio: float
+    max_drawdown: float
+    calmar_ratio: float
+
+
+class BacktestResult(BaseModel):
+    """The structured result of a historical backtest simulation."""
+
+    dates: list[str]
+    portfolio_cumulative: list[float]
+    benchmark_cumulative: list[float]
+    benchmark: str
+    lookback_years: int
+    stats: BacktestStats
+    benchmark_stats: BacktestStats

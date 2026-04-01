@@ -46,6 +46,8 @@ interface AppContextType {
   setOptimizerRebalanceMode: React.Dispatch<React.SetStateAction<boolean>>;
   optimizerResult: any | null;
   setOptimizerResult: React.Dispatch<React.SetStateAction<any | null>>;
+  optimizerBacktestResult: any | null;
+  setOptimizerBacktestResult: React.Dispatch<React.SetStateAction<any | null>>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -71,6 +73,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [optimizerStrategy, setOptimizerStrategy] = useState<OptimizationStrategy>('max_sharpe');
   const [optimizerRebalanceMode, setOptimizerRebalanceMode] = useState<boolean>(false);
   const [optimizerResult, setOptimizerResult] = useState<any | null>(null);
+  const [optimizerBacktestResult, setOptimizerBacktestResult] = useState<any | null>(null);
 
   return (
     <AppContext.Provider
@@ -106,6 +109,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setOptimizerRebalanceMode,
         optimizerResult,
         setOptimizerResult,
+        optimizerBacktestResult,
+        setOptimizerBacktestResult,
       }}
     >
       {children}
