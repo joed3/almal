@@ -1,5 +1,7 @@
 # Almal
 
+https://github.com/joed3/almal/blob/main/demo/almal_demo.mp4
+
 A multi-agent stock portfolio monitoring and optimization tool powered by Claude.
 
 Almal lets you profile the historical performance of a portfolio against benchmarks,
