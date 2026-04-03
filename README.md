@@ -1,6 +1,6 @@
 # Almal
 
-https://github.com/joed3/almal/blob/main/demo/almal_demo.mp4
+https://github.com/user-attachments/assets/aa33ea6b-5c78-45ac-9f60-fc41968f79e5
 
 A multi-agent stock portfolio monitoring and optimization tool powered by Claude.
 
