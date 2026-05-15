@@ -47,8 +47,6 @@ export default function AllocationTable({
   const showHeld = allocations.some((a) => a.holding_days != null);
   const groupBySector = sectorMap != null && Object.keys(sectorMap).length > 0;
 
-  const colSpanFull = 4 + (showHeld ? 1 : 0) + (showTax ? 1 : 0) + 1;
-
   function renderRow(alloc: AllocationRequirement) {
     const name = nameMap?.[alloc.ticker];
     return (

@@ -4,9 +4,10 @@ import { ThemeProvider } from './context/ThemeContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import TopNav from './components/TopNav';
 import PortfolioUploadFAB from './components/PortfolioUploadFAB';
-import Investigator from './pages/Investigator';
-import Optimizer from './pages/Optimizer';
 import PortfolioProfiler from './pages/PortfolioProfiler';
+import PortfolioResearch from './pages/PortfolioResearch';
+import DiversifyPage from './pages/DiversifyPage';
+import Optimizer from './pages/Optimizer';
 
 function App() {
   return (
@@ -19,7 +20,8 @@ function App() {
               <ErrorBoundary>
                 <Routes>
                   <Route path="/" element={<PortfolioProfiler />} />
-                  <Route path="/investigator" element={<Investigator />} />
+                  <Route path="/research" element={<PortfolioResearch />} />
+                  <Route path="/diversify" element={<DiversifyPage />} />
                   <Route path="/optimizer" element={<Optimizer />} />
                 </Routes>
               </ErrorBoundary>

@@ -9,7 +9,11 @@
       "Bash(frontend/node_modules/.bin/tsc --noEmit --project frontend/tsconfig.app.json)",
       "Bash(python -c \"from src.analysis.performance import HoldingWeight, PortfolioAnalyzer; print\\('OK'\\)\")",
       "Bash(python *)",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(npm install *)",
+      "Bash(npm test *)",
+      "Bash(./node_modules/.bin/tsc *)",
+      "Bash(npm run *)"
     ]
   }
 }

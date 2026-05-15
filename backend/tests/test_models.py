@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 from src.models.market import PriceBar, PriceHistory, TickerInfo
+from src.models.optimizer import ConstraintSet
 from src.models.portfolio import Holding, Lot, Portfolio
 
 
@@ -165,3 +166,43 @@ class TestPriceHistory:
         )
         assert history.ticker == "AAPL"
         assert len(history.bars) == 1
+
+
+class TestConstraintSet:
+    """Tests for ConstraintSet (v2.0.0 fields: max_shares, no_sell_tickers)."""
+
+    def test_all_fields_default_to_empty(self) -> None:
+        cs = ConstraintSet()
+        assert cs.max_weights == {}
+        assert cs.min_weights == {}
+        assert cs.min_shares == {}
+        assert cs.max_shares == {}
+        assert cs.no_sell_tickers == []
+        assert cs.portfolio_reduction_target is None
+
+    def test_max_shares_can_be_populated(self) -> None:
+        cs = ConstraintSet(max_shares={"AAPL": 50.0, "MSFT": 100.0})
+        assert cs.max_shares["AAPL"] == 50.0
+        assert cs.max_shares["MSFT"] == 100.0
+
+    def test_no_sell_tickers_accepts_list_of_strings(self) -> None:
+        cs = ConstraintSet(no_sell_tickers=["AAPL", "MSFT", "GOOG"])
+        assert cs.no_sell_tickers == ["AAPL", "MSFT", "GOOG"]
+
+    def test_no_sell_tickers_and_max_shares_coexist(self) -> None:
+        cs = ConstraintSet(
+            no_sell_tickers=["AAPL"],
+            max_shares={"AAPL": 30.0},
+        )
+        assert "AAPL" in cs.no_sell_tickers
+        assert cs.max_shares["AAPL"] == 30.0
+
+    def test_model_copy_deep_does_not_mutate_original(self) -> None:
+        cs = ConstraintSet(no_sell_tickers=["AAPL"])
+        copy = cs.model_copy(deep=True)
+        copy.min_shares["AAPL"] = 10.0
+        assert "AAPL" not in cs.min_shares
+
+    def test_invalid_max_shares_type_raises(self) -> None:
+        with pytest.raises(Exception):
+            ConstraintSet(max_shares="not-a-dict")  # type: ignore[arg-type]

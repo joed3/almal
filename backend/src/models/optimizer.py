@@ -82,6 +82,18 @@ class ConstraintSet(BaseModel):
         default_factory=dict,
         description="Minimum shares to hold per ticker.",
     )
+    max_shares: dict[str, float] = Field(
+        default_factory=dict,
+        description="Maximum shares to hold per ticker (ceiling on position size).",
+    )
+    no_sell_tickers: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Convenience list of tickers whose current position must not be reduced. "
+            "Resolved to min_shares entries using the current_portfolio at optimize "
+            "time."
+        ),
+    )
     portfolio_reduction_target: float | None = Field(
         default=None,
         ge=0,

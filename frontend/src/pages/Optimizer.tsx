@@ -47,7 +47,7 @@ const STRATEGY_GROUPS: StrategyGroup[] = [
     ],
   },
   {
-    group: 'Moderate',
+    group: 'Balanced',
     strategies: [
       {
         value: 'max_sharpe',
@@ -171,6 +171,8 @@ interface ConstraintSet {
   max_weights: Record<string, number>;
   min_weights: Record<string, number>;
   min_shares: Record<string, number>;
+  max_shares: Record<string, number>;
+  no_sell_tickers: string[];
   portfolio_reduction_target: number | null;
   tax_aware: boolean;
   tax_aware_weight: number;
@@ -180,6 +182,8 @@ const EMPTY_CONSTRAINTS: ConstraintSet = {
   max_weights: {},
   min_weights: {},
   min_shares: {},
+  max_shares: {},
+  no_sell_tickers: [],
   portfolio_reduction_target: null,
   tax_aware: false,
   tax_aware_weight: 0.5,
@@ -473,6 +477,7 @@ export default function Optimizer() {
     optimizerPrincipal: principal, setOptimizerPrincipal: setPrincipal,
     optimizerStrategy: strategy, setOptimizerStrategy: setStrategy,
     optimizerRebalanceMode: rebalanceMode, setOptimizerRebalanceMode: setRebalanceMode,
+    optimizerLockedTickers: lockedTickers, setOptimizerLockedTickers: setLockedTickers,
     optimizerResult: result, setOptimizerResult: setResult,
     optimizerBacktestResult: backtestData, setOptimizerBacktestResult: setBacktestData,
   } = useAppContext();
@@ -487,7 +492,12 @@ export default function Optimizer() {
   const [advancedParams, setAdvancedParams] = useState<AdvancedParams>({});
   const [blViews, setBlViews] = useState<BLView[]>([]);
 
-  // Constraints state
+  // Structured constraint state
+  const [maxPositionPct, setMaxPositionPct] = useState('');
+  const [minPositionPct, setMinPositionPct] = useState('');
+  const [nlpConstraintOpen, setNlpConstraintOpen] = useState(false);
+
+  // NLP constraint state
   const [constraintText, setConstraintText] = useState('');
   const [constraintParsing, setConstraintParsing] = useState(false);
   const [constraintChips, setConstraintChips] = useState<string[]>([]);
@@ -674,11 +684,26 @@ export default function Optimizer() {
           lookback_years: lookbackYears,
           advanced_params: Object.keys(cleanParams).length > 0 ? cleanParams : undefined,
           views: validViews.length > 0 ? validViews : undefined,
-          constraints: constraintChips.length > 0 ? {
-            ...parsedConstraints,
-            tax_aware: parsedConstraints.tax_aware,
-            tax_aware_weight: taxAwareWeight,
-          } : undefined,
+          constraints: (() => {
+            const globalMax = maxPositionPct
+              ? Object.fromEntries(activeTickers.map((t) => [t, Number(maxPositionPct) / 100]))
+              : {};
+            const globalMin = minPositionPct
+              ? Object.fromEntries(activeTickers.map((t) => [t, Number(minPositionPct) / 100]))
+              : {};
+            const hasStructured = maxPositionPct || minPositionPct;
+            const hasLocks = lockedTickers.length > 0;
+            const hasAny = constraintChips.length > 0 || hasStructured || parsedConstraints.tax_aware || hasLocks;
+            if (!hasAny) return undefined;
+            return {
+              ...parsedConstraints,
+              max_weights: { ...globalMax, ...parsedConstraints.max_weights },
+              min_weights: { ...globalMin, ...parsedConstraints.min_weights },
+              no_sell_tickers: lockedTickers,
+              tax_aware: parsedConstraints.tax_aware,
+              tax_aware_weight: taxAwareWeight,
+            };
+          })(),
           lots: portfolio?.holdings.flatMap((h) =>
             h.lots.map((l) => ({ ticker: h.ticker, shares: l.shares, purchase_date: l.purchase_date, cost_basis: l.cost_basis }))
           ) ?? [],
@@ -801,10 +826,39 @@ export default function Optimizer() {
   return (
     <div className="p-8 max-w-7xl mx-auto">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight text-stone-900 dark:text-white">Portfolio Optimizer</h1>
-        <p className="text-stone-600 dark:text-gray-400 mt-2">
-          Harness mathematical algorithms to compute the optimal weight distribution for a set of candidate investments based on your risk tolerance.
+        <h1 className="text-2xl font-semibold text-stone-900 dark:text-white mb-2">Optimize</h1>
+        <p className="text-stone-600 dark:text-gray-400">
+          Compute optimal weight distributions for a set of candidate investments using quantitative algorithms.
         </p>
+      </div>
+
+      {/* Stepper */}
+      <div className="flex items-center gap-3 mb-8">
+        <div className="flex items-center gap-2">
+          <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${!result ? 'bg-blue-600 text-white' : 'bg-stone-200 dark:bg-gray-700 text-stone-600 dark:text-gray-300'}`}>
+            1
+          </span>
+          <span className={`text-sm font-medium transition-colors ${!result ? 'text-blue-600 dark:text-blue-400' : 'text-stone-400 dark:text-gray-500'}`}>
+            Configure
+          </span>
+        </div>
+        <div className="w-8 h-px bg-stone-200 dark:bg-gray-700" />
+        <div className="flex items-center gap-2">
+          <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${result ? 'bg-blue-600 text-white' : 'bg-stone-200 dark:bg-gray-700 text-stone-600 dark:text-gray-300'}`}>
+            2
+          </span>
+          <span className={`text-sm font-medium transition-colors ${result ? 'text-blue-600 dark:text-blue-400' : 'text-stone-400 dark:text-gray-500'}`}>
+            Results
+          </span>
+        </div>
+        {result && (
+          <button
+            onClick={() => { setResult(null); setBacktestData(null); }}
+            className="ml-auto text-xs text-stone-400 dark:text-gray-500 hover:text-stone-600 dark:hover:text-gray-300 transition-colors"
+          >
+            ← Reconfigure
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -854,6 +908,82 @@ export default function Optimizer() {
                 </div>
               )}
 
+              {/* Position locks table — rebalance mode only */}
+              {rebalanceMode && portfolio && portfolio.holdings.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-sm font-medium text-stone-600 dark:text-gray-400 flex items-center gap-1">
+                      Position Locks
+                      <InfoPopover content="Locked positions will not be sold below their current share count. Useful for protecting unrealised gains or maintaining strategic positions." />
+                    </label>
+                    <div className="flex items-center gap-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setLockedTickers(portfolio.holdings.map((h) => h.ticker.toUpperCase()))}
+                        className="text-stone-500 dark:text-gray-400 hover:text-stone-800 dark:hover:text-gray-200 transition-colors"
+                      >
+                        Lock all
+                      </button>
+                      <span className="text-stone-300 dark:text-gray-600">·</span>
+                      <button
+                        type="button"
+                        onClick={() => setLockedTickers([])}
+                        className="text-stone-500 dark:text-gray-400 hover:text-stone-800 dark:hover:text-gray-200 transition-colors"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                  <div className="border border-stone-200 dark:border-gray-700 rounded-md overflow-hidden">
+                    {portfolio.holdings.map((h, i) => {
+                      const ticker = h.ticker.toUpperCase();
+                      const isLocked = lockedTickers.includes(ticker);
+                      return (
+                        <div
+                          key={ticker}
+                          className={`flex items-center justify-between px-3 py-2 text-sm ${i > 0 ? 'border-t border-stone-100 dark:border-gray-800' : ''} ${isLocked ? 'bg-amber-50/50 dark:bg-amber-950/20' : 'bg-white dark:bg-gray-900'}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-stone-900 dark:text-white w-14 shrink-0">{ticker}</span>
+                            <span className="text-xs text-stone-400 dark:text-gray-500">{h.total_shares.toFixed(2)} sh</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setLockedTickers((prev) =>
+                              isLocked ? prev.filter((t) => t !== ticker) : [...prev, ticker]
+                            )}
+                            className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded border transition-colors ${
+                              isLocked
+                                ? 'bg-amber-100 dark:bg-amber-900/40 border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300'
+                                : 'bg-white dark:bg-gray-800 border-stone-200 dark:border-gray-700 text-stone-400 dark:text-gray-500 hover:border-stone-300 dark:hover:border-gray-600'
+                            }`}
+                            aria-label={isLocked ? `Unlock ${ticker}` : `Lock ${ticker}`}
+                          >
+                            {isLocked ? (
+                              <>
+                                <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                                  <path d="M7 11V7a5 5 0 0110 0v4" />
+                                </svg>
+                                Locked
+                              </>
+                            ) : (
+                              <>
+                                <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                                  <path d="M7 11V7a5 5 0 019.9-1" />
+                                </svg>
+                                Lock
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Principal */}
               <div>
                 <label className="block text-sm font-medium text-stone-600 dark:text-gray-400 mb-1">
@@ -871,107 +1001,135 @@ export default function Optimizer() {
 
               {/* Constraints */}
               <div>
-                <label className="block text-sm font-medium text-stone-600 dark:text-gray-400 mb-1.5">
+                <label className="block text-sm font-medium text-stone-600 dark:text-gray-400 mb-2">
                   Constraints
-                  <InfoPopover content="Describe portfolio constraints in plain English. e.g. 'No position larger than 15%' or 'Keep at least 50 shares of AAPL'." />
                 </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={constraintText}
-                    onChange={(e) => setConstraintText(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && parseConstraints()}
-                    placeholder="e.g. no position over 20%…"
-                    className="flex-1 bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded-md py-2 px-3 text-stone-900 dark:text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-stone-400 dark:placeholder-gray-600"
-                  />
+                <div className="space-y-2">
+
+                  {/* Max position size */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-stone-500 dark:text-gray-400 w-32 shrink-0">Max position</span>
+                    <div className="relative flex-1">
+                      <input
+                        type="number"
+                        min="1" max="100" step="1"
+                        placeholder="No limit"
+                        value={maxPositionPct}
+                        onChange={(e) => setMaxPositionPct(e.target.value)}
+                        className="w-full bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded px-2 py-1.5 pr-6 text-sm text-stone-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-stone-400 dark:placeholder-gray-600"
+                      />
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-stone-400 dark:text-gray-500 pointer-events-none">%</span>
+                    </div>
+                  </div>
+
+                  {/* Min position size */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-stone-500 dark:text-gray-400 w-32 shrink-0">Min position</span>
+                    <div className="relative flex-1">
+                      <input
+                        type="number"
+                        min="0" max="50" step="0.5"
+                        placeholder="No limit"
+                        value={minPositionPct}
+                        onChange={(e) => setMinPositionPct(e.target.value)}
+                        className="w-full bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded px-2 py-1.5 pr-6 text-sm text-stone-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-stone-400 dark:placeholder-gray-600"
+                      />
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-stone-400 dark:text-gray-500 pointer-events-none">%</span>
+                    </div>
+                  </div>
+
+                  {/* Tax-aware controls */}
+                  {hasLotData && (
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="taxAwareToggle"
+                          checked={parsedConstraints.tax_aware}
+                          onChange={(e) => setParsedConstraints((c) => ({ ...c, tax_aware: e.target.checked }))}
+                          className="w-4 h-4 text-blue-600 bg-white dark:bg-gray-700 border-stone-300 dark:border-gray-600 rounded focus:ring-blue-500 cursor-pointer"
+                        />
+                        <label htmlFor="taxAwareToggle" className="text-sm text-stone-700 dark:text-gray-300 cursor-pointer select-none">
+                          Tax-aware optimization
+                          <InfoPopover content="Penalises selling positions with large unrealised gains to reduce estimated capital gains tax. Requires lot data with purchase dates and cost basis." />
+                        </label>
+                      </div>
+                      {parsedConstraints.tax_aware && (
+                        <div className="pl-6 space-y-2">
+                          <div>
+                            <label className="block text-xs text-stone-500 dark:text-gray-400 mb-1">
+                              Tax penalty weight: {taxAwareWeight.toFixed(2)}
+                              <InfoPopover content="0 = ignore taxes entirely. 1 = strongly prefer tax-efficient trades. 0.5 is a balanced default." />
+                            </label>
+                            <input type="range" min="0" max="1" step="0.05" value={taxAwareWeight} onChange={(e) => setTaxAwareWeight(Number(e.target.value))} className="w-full accent-blue-600" />
+                          </div>
+                          <div className="flex gap-3">
+                            <div className="flex-1">
+                              <label className="block text-xs text-stone-500 dark:text-gray-400 mb-1">Short-term rate (%)</label>
+                              <input type="number" min="0" max="50" step="1" value={shortTermRate} onChange={(e) => setShortTermRate(Number(e.target.value))} className="w-full bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded px-2 py-1.5 text-xs text-stone-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            </div>
+                            <div className="flex-1">
+                              <label className="block text-xs text-stone-500 dark:text-gray-400 mb-1">Long-term rate (%)</label>
+                              <input type="number" min="0" max="50" step="1" value={longTermRate} onChange={(e) => setLongTermRate(Number(e.target.value))} className="w-full bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded px-2 py-1.5 text-xs text-stone-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* NLP constraint — collapsible */}
                   <button
                     type="button"
-                    onClick={parseConstraints}
-                    disabled={constraintParsing || !constraintText.trim()}
-                    className="bg-stone-100 dark:bg-gray-800 hover:bg-stone-200 dark:hover:bg-gray-700 border border-stone-300 dark:border-gray-700 text-stone-700 dark:text-gray-300 text-sm font-medium rounded-md px-3 transition-colors disabled:opacity-50"
+                    onClick={() => setNlpConstraintOpen((o) => !o)}
+                    className="flex items-center gap-1 text-xs text-stone-400 dark:text-gray-500 hover:text-stone-600 dark:hover:text-gray-300 transition-colors pt-1"
                   >
-                    {constraintParsing ? '…' : 'Parse'}
+                    <svg className={`w-3 h-3 transition-transform ${nlpConstraintOpen ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                    Custom constraint (natural language)
                   </button>
-                </div>
-                {clarificationNeeded && (
-                  <p className="mt-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded px-2 py-1.5">
-                    {clarificationNeeded}
-                  </p>
-                )}
-                {constraintChips.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {constraintChips.map((chip, i) => (
-                      <span
-                        key={i}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-300"
-                      >
-                        {chip}
+
+                  {nlpConstraintOpen && (
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={constraintText}
+                          onChange={(e) => setConstraintText(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && parseConstraints()}
+                          placeholder="e.g. keep at least 50 shares of AAPL…"
+                          className="flex-1 bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded-md py-2 px-3 text-stone-900 dark:text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-stone-400 dark:placeholder-gray-600"
+                        />
                         <button
                           type="button"
-                          onClick={() => removeChip(i)}
-                          className="text-blue-400 hover:text-blue-700 dark:hover:text-blue-200 leading-none"
+                          onClick={parseConstraints}
+                          disabled={constraintParsing || !constraintText.trim()}
+                          className="bg-stone-100 dark:bg-gray-800 hover:bg-stone-200 dark:hover:bg-gray-700 border border-stone-300 dark:border-gray-700 text-stone-700 dark:text-gray-300 text-sm font-medium rounded-md px-3 transition-colors disabled:opacity-50"
                         >
-                          ×
+                          {constraintParsing ? '…' : 'Parse'}
                         </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {/* Tax-aware controls */}
-                {hasLotData && (
-                  <div className="mt-3 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        id="taxAwareToggle"
-                        checked={parsedConstraints.tax_aware}
-                        onChange={(e) => setParsedConstraints((c) => ({ ...c, tax_aware: e.target.checked }))}
-                        className="w-4 h-4 text-blue-600 bg-white dark:bg-gray-700 border-stone-300 dark:border-gray-600 rounded focus:ring-blue-500 cursor-pointer"
-                      />
-                      <label htmlFor="taxAwareToggle" className="text-sm text-stone-700 dark:text-gray-300 cursor-pointer select-none">
-                        Tax-aware optimization
-                        <InfoPopover content="Penalises selling positions with large unrealised gains to reduce estimated capital gains tax. Requires lot data with purchase dates and cost basis." />
-                      </label>
-                    </div>
-                    {parsedConstraints.tax_aware && (
-                      <div className="pl-6 space-y-2">
-                        <div>
-                          <label className="block text-xs text-stone-500 dark:text-gray-400 mb-1">
-                            Tax penalty weight: {taxAwareWeight.toFixed(2)}
-                            <InfoPopover content="0 = ignore taxes entirely. 1 = strongly prefer tax-efficient trades. 0.5 is a balanced default." />
-                          </label>
-                          <input
-                            type="range"
-                            min="0" max="1" step="0.05"
-                            value={taxAwareWeight}
-                            onChange={(e) => setTaxAwareWeight(Number(e.target.value))}
-                            className="w-full accent-blue-600"
-                          />
-                        </div>
-                        <div className="flex gap-3">
-                          <div className="flex-1">
-                            <label className="block text-xs text-stone-500 dark:text-gray-400 mb-1">Short-term rate (%)</label>
-                            <input
-                              type="number" min="0" max="50" step="1"
-                              value={shortTermRate}
-                              onChange={(e) => setShortTermRate(Number(e.target.value))}
-                              className="w-full bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded px-2 py-1.5 text-xs text-stone-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                          </div>
-                          <div className="flex-1">
-                            <label className="block text-xs text-stone-500 dark:text-gray-400 mb-1">Long-term rate (%)</label>
-                            <input
-                              type="number" min="0" max="50" step="1"
-                              value={longTermRate}
-                              onChange={(e) => setLongTermRate(Number(e.target.value))}
-                              className="w-full bg-white dark:bg-gray-800 border border-stone-300 dark:border-gray-700 rounded px-2 py-1.5 text-xs text-stone-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                          </div>
-                        </div>
                       </div>
-                    )}
-                  </div>
-                )}
+                      {clarificationNeeded && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded px-2 py-1.5">
+                          {clarificationNeeded}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Constraint chips from NLP */}
+                  {constraintChips.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {constraintChips.map((chip, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-300">
+                          {chip}
+                          <button type="button" onClick={() => removeChip(i)} className="text-blue-400 hover:text-blue-700 dark:hover:text-blue-200 leading-none">×</button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Strategy selector */}

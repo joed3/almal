@@ -25,6 +25,8 @@ Return a JSON object with EXACTLY this structure (no markdown, no explanation):
     "max_weights": {},
     "min_weights": {},
     "min_shares": {},
+    "max_shares": {},
+    "no_sell_tickers": [],
     "portfolio_reduction_target": null,
     "tax_aware": false,
     "tax_aware_weight": 0.5
@@ -38,6 +40,10 @@ Parsing rules:
 - "at least X% in TICKER" or "minimum X% TICKER" → min_weights: {TICKER: 0.X}
 - "keep at least N shares of TICKER" or "don't sell more than \
 half my TICKER" → min_shares
+- "hold no more than N shares of TICKER" or "cap TICKER at N shares" → \
+max_shares: {TICKER: N}  (dict ticker→float, max shares to hold)
+- "don't sell TICKER" / "keep my TICKER position" / "lock TICKER" → \
+no_sell_tickers: [TICKER]  (list of tickers, don't reduce below current position)
 - "reduce portfolio by $X" or "free up $X" or "raise $X cash" → \
 portfolio_reduction_target: X
 - "tax-efficient" / "minimize capital gains" / "avoid selling gains" → \
@@ -47,6 +53,7 @@ or 0.9 for "strongly prefer"
 - Convert percentages to decimals (15% → 0.15)
 - "half my TICKER shares" → compute 50% of the holding from lots if available
 - chips: concise labels like "AAPL: max 15%", "Hold ≥ 50 MSFT", \
+"TSLA: max 100 shares", "Don't sell GOOG", \
 "Reduce by $10,000", "Tax-aware (moderate)"
 - Only set clarification_needed when you genuinely cannot determine the intent after \
   reasonable inference — use it sparingly

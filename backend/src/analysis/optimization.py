@@ -41,6 +41,52 @@ logger = logging.getLogger(__name__)
 _BL_CONFIDENCE_MAP = {"low": 0.25, "medium": 0.50, "high": 0.90}
 
 
+def _resolve_no_sell_tickers(
+    constraints: ConstraintSet,
+    current_portfolio: dict[str, float],
+) -> ConstraintSet:
+    """Return a copy of constraints with no_sell_tickers resolved into min_shares.
+
+    Tickers listed in no_sell_tickers inherit their current share count as a
+    min_shares floor, unless an explicit min_shares entry already exists.
+    The caller's ConstraintSet is never mutated.
+    """
+    if not constraints.no_sell_tickers:
+        return constraints
+    c = constraints.model_copy(deep=True)
+    for ticker in c.no_sell_tickers:
+        if ticker in current_portfolio and ticker not in c.min_shares:
+            c.min_shares[ticker] = current_portfolio[ticker]
+    return c
+
+
+def _build_weight_bounds(
+    constraints: ConstraintSet,
+    tickers: list[str],
+    latest_prices: dict[str, float],
+    total_value: float,
+) -> dict[str, tuple[float, float]]:
+    """Compute per-ticker (lo, hi) weight bounds from a resolved ConstraintSet.
+
+    min_shares and max_shares are converted to weight fractions using the
+    latest price and total portfolio value. The upper bound is clamped to 1.0.
+    """
+    weight_bounds: dict[str, tuple[float, float]] = {}
+    for ticker in tickers:
+        lo = constraints.min_weights.get(ticker, 0.0)
+        hi = constraints.max_weights.get(ticker, 1.0)
+        if ticker in constraints.min_shares:
+            price = latest_prices.get(ticker, 0.0)
+            if price > 0:
+                lo = max(lo, constraints.min_shares[ticker] * price / total_value)
+        if ticker in constraints.max_shares:
+            price = latest_prices.get(ticker, 0.0)
+            if price > 0:
+                hi = min(hi, constraints.max_shares[ticker] * price / total_value)
+        weight_bounds[ticker] = (lo, min(hi, 1.0))
+    return weight_bounds
+
+
 def _apply_weight_bounds(
     ef: EfficientFrontier,
     tickers: list[str],
@@ -140,16 +186,10 @@ class PortfolioOptimizer:
         # 3. Build per-ticker weight bounds from constraints
         weight_bounds: dict[str, tuple[float, float]] = {}
         if constraints and total_value > 0:
-            for ticker in df.columns:
-                lo = constraints.min_weights.get(ticker, 0.0)
-                hi = constraints.max_weights.get(ticker, 1.0)
-                if ticker in constraints.min_shares:
-                    price = latest_prices.get(ticker, 0.0)
-                    if price > 0:
-                        lo = max(
-                            lo, constraints.min_shares[ticker] * price / total_value
-                        )
-                weight_bounds[ticker] = (lo, min(hi, 1.0))
+            constraints = _resolve_no_sell_tickers(constraints, current_portfolio)
+            weight_bounds = _build_weight_bounds(
+                constraints, list(df.columns), latest_prices, total_value
+            )
 
         # 4. Compute tax-aware mu adjustment (MV strategies only)
         mu_override: pd.Series | None = None

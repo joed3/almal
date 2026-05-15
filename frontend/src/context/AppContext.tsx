@@ -40,8 +40,6 @@ interface AppContextType {
   setInvestigatorResult: React.Dispatch<React.SetStateAction<any | null>>;
   investigatorNarrative: string | null;
   setInvestigatorNarrative: React.Dispatch<React.SetStateAction<string | null>>;
-  investigatorMode: string;
-  setInvestigatorMode: React.Dispatch<React.SetStateAction<string>>;
   investigatorSuggestResults: any | null;
   setInvestigatorSuggestResults: React.Dispatch<React.SetStateAction<any | null>>;
   investigatorSuggestMatrix: any | null;
@@ -78,6 +76,8 @@ interface AppContextType {
   setOptimizerStrategy: React.Dispatch<React.SetStateAction<OptimizationStrategy>>;
   optimizerRebalanceMode: boolean;
   setOptimizerRebalanceMode: React.Dispatch<React.SetStateAction<boolean>>;
+  optimizerLockedTickers: string[];
+  setOptimizerLockedTickers: React.Dispatch<React.SetStateAction<string[]>>;
   optimizerResult: any | null;
   setOptimizerResult: React.Dispatch<React.SetStateAction<any | null>>;
   optimizerBacktestResult: any | null;
@@ -99,7 +99,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [investigatorResult, setInvestigatorResult] = useState<any | null>(null);
   const [investigatorNarrative, setInvestigatorNarrative] = useState<string | null>(null);
-  const [investigatorMode, setInvestigatorMode] = useState<string>('investigate');
   const [investigatorSuggestResults, setInvestigatorSuggestResults] = useState<any | null>(null);
   const [investigatorSuggestMatrix, setInvestigatorSuggestMatrix] = useState<any | null>(null);
   const [investigatorPortfolioSectorMap, setInvestigatorPortfolioSectorMap] = useState<Record<string, string | null>>({});
@@ -120,6 +119,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [optimizerPrincipal, setOptimizerPrincipal] = useState<number>(100000);
   const [optimizerStrategy, setOptimizerStrategy] = useState<OptimizationStrategy>('max_sharpe');
   const [optimizerRebalanceMode, setOptimizerRebalanceMode] = useState<boolean>(false);
+  const [optimizerLockedTickers, setOptimizerLockedTickers] = useState<string[]>([]);
   const [optimizerResult, setOptimizerResult] = useState<any | null>(null);
   const [optimizerBacktestResult, setOptimizerBacktestResult] = useState<any | null>(null);
 
@@ -144,8 +144,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setInvestigatorResult,
         investigatorNarrative,
         setInvestigatorNarrative,
-        investigatorMode,
-        setInvestigatorMode,
         investigatorSuggestResults,
         setInvestigatorSuggestResults,
         investigatorSuggestMatrix,
@@ -180,6 +178,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setOptimizerStrategy,
         optimizerRebalanceMode,
         setOptimizerRebalanceMode,
+        optimizerLockedTickers,
+        setOptimizerLockedTickers,
         optimizerResult,
         setOptimizerResult,
         optimizerBacktestResult,

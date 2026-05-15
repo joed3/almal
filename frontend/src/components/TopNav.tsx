@@ -3,9 +3,10 @@ import { useTheme } from '../context/ThemeContext';
 import { useAppContext } from '../context/AppContext';
 
 const navItems = [
-  { to: '/', label: 'Profiler', end: true },
-  { to: '/investigator', label: 'Investigator', end: false },
-  { to: '/optimizer', label: 'Optimizer', end: false },
+  { to: '/',          label: 'Dashboard', end: true  },
+  { to: '/research',  label: 'Research',  end: false },
+  { to: '/diversify', label: 'Diversify', end: false },
+  { to: '/optimizer', label: 'Optimize',  end: false },
 ];
 
 export default function TopNav() {

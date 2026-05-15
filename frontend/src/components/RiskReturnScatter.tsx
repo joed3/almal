@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import _Plot from 'react-plotly.js';
 import { SECTOR_COLORS, SECTOR_ORDER } from './CorrelationHeatmap';
 
@@ -71,47 +71,48 @@ export default function RiskReturnScatter({
   };
 
   // One Plotly trace per sector — clicking the legend entry toggles that sector.
-  const sectors = [
-    ...new Set(points.map((p) => p.sector ?? 'Unknown')),
-  ].sort((a, b) => {
-    const ai = SECTOR_ORDER.indexOf(a);
-    const bi = SECTOR_ORDER.indexOf(b);
-    if (ai === -1 && bi === -1) return a.localeCompare(b);
-    if (ai === -1) return 1;
-    if (bi === -1) return -1;
-    return ai - bi;
-  });
+  const traces = useMemo(() => {
+    const sectors = [
+      ...new Set(points.map((p) => p.sector ?? 'Unknown')),
+    ].sort((a, b) => {
+      const ai = SECTOR_ORDER.indexOf(a);
+      const bi = SECTOR_ORDER.indexOf(b);
+      if (ai === -1 && bi === -1) return a.localeCompare(b);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
 
-  const traces = sectors.map((sector) => {
-    const sp = points.filter((p) => (p.sector ?? 'Unknown') === sector);
-    const sectorColor = SECTOR_COLORS[sector] ?? (isDark ? '#6b7280' : '#64748b');
-    const pointColor = (p: ScatterPoint) =>
-      p.isPortfolio === false && p.correlationScore != null
-        ? corrColor(p.correlationScore)
-        : sectorColor;
-    return {
-      type: 'scatter',
-      mode: 'markers+text',
-      name: sector,
-      legendgroup: sector,
-      x: sp.map((p) => p.volatility * 100),
-      y: sp.map(getY),
-      // Text shown only for portfolio holdings when count is manageable
-      text: sp.map((p) => showTextLabels && p.isPortfolio !== false ? p.ticker : ''),
-      textposition: 'top center',
-      textfont: { size: 9, color: fontColor },
-      marker: {
-        color: sp.map(pointColor),
-        size: sp.map(getSize),
-        // Within one trace, portfolio=filled circle, candidates=open circle
-        symbol: sp.map((p) => p.isPortfolio !== false ? 'circle' : 'circle-open'),
-        line: { width: 1.5, color: sp.map(pointColor) },
-        opacity: sp.map((p) => (p.isPortfolio !== false ? 0.9 : 0.65)),
-      },
-      customdata: sp.map(makeHover),
-      hovertemplate: '%{customdata}<extra></extra>',
-    };
-  });
+    return sectors.map((sector) => {
+      const sp = points.filter((p) => (p.sector ?? 'Unknown') === sector);
+      const sectorColor = SECTOR_COLORS[sector] ?? (isDark ? '#6b7280' : '#64748b');
+      const pointColor = (p: ScatterPoint) =>
+        p.isPortfolio === false && p.correlationScore != null
+          ? corrColor(p.correlationScore)
+          : sectorColor;
+      return {
+        type: 'scatter',
+        mode: 'markers+text',
+        name: sector,
+        legendgroup: sector,
+        x: sp.map((p) => p.volatility * 100),
+        y: sp.map(getY),
+        text: sp.map((p) => showTextLabels && p.isPortfolio !== false ? p.ticker : ''),
+        textposition: 'top center',
+        textfont: { size: 9, color: fontColor },
+        marker: {
+          color: sp.map(pointColor),
+          size: sp.map(getSize),
+          symbol: sp.map((p) => p.isPortfolio !== false ? 'circle' : 'circle-open'),
+          line: { width: 1.5, color: sp.map(pointColor) },
+          opacity: sp.map((p) => (p.isPortfolio !== false ? 0.9 : 0.65)),
+        },
+        customdata: sp.map(makeHover),
+        hovertemplate: '%{customdata}<extra></extra>',
+      };
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [points, isDark, yMetric]);
 
   const yLabel = yMetric === 'return' ? 'Ann. Return (%)' : 'Sharpe Ratio';
   const yTickSuffix = yMetric === 'return' ? '%' : '';

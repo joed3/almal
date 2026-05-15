@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import _Plot from 'react-plotly.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -168,164 +169,170 @@ export default function CorrelationHeatmap({
   title = 'Correlation Matrix',
   height = 480,
 }: CorrelationHeatmapProps) {
-  const portfolioSet = new Set(portfolioTickers ?? []);
-  // Colour-label mode: portfolioTickers supplied and non-empty → distinguish candidates.
-  const hasPortfolioContext = portfolioTickers != null && portfolioTickers.length > 0;
+  const memoized = useMemo(() => {
+    const portfolioSet = new Set(portfolioTickers ?? []);
+    const hasPortfolioContext = portfolioTickers != null && portfolioTickers.length > 0;
 
-  function getSector(ticker: string): string {
-    return sectorMap?.[ticker] ?? 'ETF / Fund';
-  }
+    function getSector(ticker: string): string {
+      return sectorMap?.[ticker] ?? 'ETF / Fund';
+    }
 
-  const valid = tickers.filter((t) => matrix[t] != null);
+    const valid = tickers.filter((t) => matrix[t] != null);
 
-  // --- Cluster by sector then within sector ---
-  const sectorToTickers: Record<string, string[]> = {};
-  for (const t of valid) {
-    const s = getSector(t);
-    if (!sectorToTickers[s]) sectorToTickers[s] = [];
-    sectorToTickers[s].push(t);
-  }
-  for (const s of Object.keys(sectorToTickers)) {
-    sectorToTickers[s] = greedyOrder(sectorToTickers[s], matrix);
-  }
-  const sectorOrderList = clusterSectors(sectorToTickers, matrix);
-  const sorted = sectorOrderList.flatMap((s) => sectorToTickers[s]);
+    // --- Cluster by sector then within sector ---
+    const sectorToTickers: Record<string, string[]> = {};
+    for (const t of valid) {
+      const s = getSector(t);
+      if (!sectorToTickers[s]) sectorToTickers[s] = [];
+      sectorToTickers[s].push(t);
+    }
+    for (const s of Object.keys(sectorToTickers)) {
+      sectorToTickers[s] = greedyOrder(sectorToTickers[s], matrix);
+    }
+    const sectorOrderList = clusterSectors(sectorToTickers, matrix);
+    const sorted = sectorOrderList.flatMap((s) => sectorToTickers[s]);
 
-  const n = sorted.length;
-  if (n < 2) return null;
+    const n = sorted.length;
+    if (n < 2) return null;
 
-  // Reversed for y-axis: sorted[0] appears at the top of the heatmap.
-  const sortedRev = [...sorted].reverse();
+    // Reversed for y-axis: sorted[0] appears at the top of the heatmap.
+    const sortedRev = [...sorted].reverse();
 
-  // z[i][j] = corr(sortedRev[i], sorted[j])
-  const z: number[][] = sortedRev.map((row) =>
-    sorted.map((col) => matrix[row]?.[col] ?? 0),
-  );
+    // z[i][j] = corr(sortedRev[i], sorted[j])
+    const z: number[][] = sortedRev.map((row) =>
+      sorted.map((col) => matrix[row]?.[col] ?? 0),
+    );
 
-  const hoverText: string[][] = sortedRev.map((row) =>
-    sorted.map((col) => {
-      const r = matrix[row]?.[col] ?? 0;
-      return [
-        `<b>${row} × ${col}</b>`,
-        `r = ${r.toFixed(3)}`,
-        `${row}: ${getSector(row)}`,
-        `${col}: ${getSector(col)}`,
-      ].join('<br>');
-    }),
-  );
+    const hoverText: string[][] = sortedRev.map((row) =>
+      sorted.map((col) => {
+        const r = matrix[row]?.[col] ?? 0;
+        return [
+          `<b>${row} × ${col}</b>`,
+          `r = ${r.toFixed(3)}`,
+          `${row}: ${getSector(row)}`,
+          `${col}: ${getSector(col)}`,
+        ].join('<br>');
+      }),
+    );
 
-  // ---------------------------------------------------------------------------
-  // Paper-coordinate helpers
-  // For a categorical axis with n ticks: paper = (data_index + 0.5) / n
-  // sorted[j]    → x paper = (j + 0.5) / n
-  // sortedRev[i] → y paper = (i + 0.5) / n  (Plotly y=0 is bottom)
-  // ---------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Paper-coordinate helpers
+    // For a categorical axis with n ticks: paper = (data_index + 0.5) / n
+    // sorted[j]    → x paper = (j + 0.5) / n
+    // sortedRev[i] → y paper = (i + 0.5) / n  (Plotly y=0 is bottom)
+    // -------------------------------------------------------------------------
 
-  const xDiv = (a: number) => (a + 1) / n;
-  const yDiv = (a: number) => (n - a - 1) / n;
-  const yMidPaper = (midIdx: number) => (n - 0.5 - midIdx) / n;
+    const xDiv = (a: number) => (a + 1) / n;
+    const yDiv = (a: number) => (n - a - 1) / n;
+    const yMidPaper = (midIdx: number) => (n - 0.5 - midIdx) / n;
 
-  // Sector groups (contiguous runs in sorted order)
-  type Group = { sector: string; start: number; end: number };
-  const groups: Group[] = [];
-  if (n > 0) {
-    let gs = 0;
-    let gSector = getSector(sorted[0]);
-    for (let i = 1; i <= n; i++) {
-      const sector = i < n ? getSector(sorted[i]) : null;
-      if (sector !== gSector) {
-        groups.push({ sector: gSector, start: gs, end: i - 1 });
-        gSector = sector!;
-        gs = i;
+    // Sector groups (contiguous runs in sorted order)
+    type Group = { sector: string; start: number; end: number };
+    const groups: Group[] = [];
+    if (n > 0) {
+      let gs = 0;
+      let gSector = getSector(sorted[0]);
+      for (let i = 1; i <= n; i++) {
+        const sector = i < n ? getSector(sorted[i]) : null;
+        if (sector !== gSector) {
+          groups.push({ sector: gSector, start: gs, end: i - 1 });
+          gSector = sector!;
+          gs = i;
+        }
       }
     }
-  }
 
-  const shapes: object[] = [];
-  const annotations: object[] = [];
+    const shapes: object[] = [];
+    const annotations: object[] = [];
 
-  // Sector dividers + right-side sector labels (pushed past the colorbar)
-  groups.forEach((group) => {
-    if (group.start > 0) {
-      const lc = isDark ? '#374151' : '#e5e7eb';
-      const xd = xDiv(group.start - 1);
-      const yd = yDiv(group.start - 1);
-      shapes.push(
-        { type: 'line', x0: xd, x1: xd, y0: 0, y1: 1, xref: 'paper', yref: 'paper', line: { color: lc, width: 1, dash: 'dot' } },
-        { type: 'line', x0: 0, x1: 1, y0: yd, y1: yd, xref: 'paper', yref: 'paper', line: { color: lc, width: 1, dash: 'dot' } },
-      );
+    // Sector dividers + right-side sector labels (pushed past the colorbar)
+    groups.forEach((group) => {
+      if (group.start > 0) {
+        const lc = isDark ? '#374151' : '#e5e7eb';
+        const xd = xDiv(group.start - 1);
+        const yd = yDiv(group.start - 1);
+        shapes.push(
+          { type: 'line', x0: xd, x1: xd, y0: 0, y1: 1, xref: 'paper', yref: 'paper', line: { color: lc, width: 1, dash: 'dot' } },
+          { type: 'line', x0: 0, x1: 1, y0: yd, y1: yd, xref: 'paper', yref: 'paper', line: { color: lc, width: 1, dash: 'dot' } },
+        );
+      }
+
+      const midIdx = (group.start + group.end) / 2;
+      const color = SECTOR_COLORS[group.sector] ?? (isDark ? '#9ca3af' : '#6b7280');
+      annotations.push({
+        x: 1.18,
+        y: yMidPaper(midIdx),
+        xref: 'paper', yref: 'paper',
+        text: group.sector,
+        showarrow: false,
+        font: { size: 9, color },
+        xanchor: 'left',
+        yanchor: 'middle',
+      });
+    });
+
+    // Custom tick labels — y-axis (left) and x-axis (bottom, rotated)
+    const tickSize = n > 25 ? 8 : 9;
+    const defaultTickColor = isDark ? '#6b7280' : '#9ca3af';
+
+    const getCandidateColor = (ticker: string): string => {
+      const score = correlationScores?.[ticker];
+      return score != null ? candidateLabelColor(score) : '#ef4444';
+    };
+
+    sortedRev.forEach((ticker, i) => {
+      const isPort = portfolioSet.has(ticker);
+      const isCandidate = hasPortfolioContext && !isPort;
+      const color = isCandidate ? getCandidateColor(ticker) : defaultTickColor;
+      const label = isPort ? `${ticker} ◆` : ticker;
+      annotations.push({
+        x: -0.01,
+        y: (i + 0.5) / n,
+        xref: 'paper', yref: 'paper',
+        text: label,
+        showarrow: false,
+        font: { size: tickSize, color },
+        xanchor: 'right',
+        yanchor: 'middle',
+      });
+    });
+
+    sorted.forEach((ticker, j) => {
+      const isPort = portfolioSet.has(ticker);
+      const isCandidate = hasPortfolioContext && !isPort;
+      const color = isCandidate ? getCandidateColor(ticker) : defaultTickColor;
+      const label = isPort ? `${ticker} ◆` : ticker;
+      annotations.push({
+        x: (j + 0.5) / n,
+        y: -0.01,
+        xref: 'paper', yref: 'paper',
+        text: label,
+        showarrow: false,
+        font: { size: tickSize, color },
+        xanchor: 'right',
+        yanchor: 'top',
+        textangle: -40,
+      });
+    });
+
+    if (hasPortfolioContext) {
+      annotations.push({
+        x: 1.18, y: -0.05,
+        xref: 'paper', yref: 'paper',
+        text: '◆ current  ·  red = low corr  ·  blue = high corr',
+        showarrow: false,
+        font: { size: 8, color: isDark ? '#6b7280' : '#9ca3af' },
+        xanchor: 'left', yanchor: 'top',
+      });
     }
 
-    const midIdx = (group.start + group.end) / 2;
-    const color = SECTOR_COLORS[group.sector] ?? (isDark ? '#9ca3af' : '#6b7280');
-    annotations.push({
-      x: 1.18,
-      y: yMidPaper(midIdx),
-      xref: 'paper', yref: 'paper',
-      text: group.sector,
-      showarrow: false,
-      font: { size: 9, color },
-      xanchor: 'left',
-      yanchor: 'middle',
-    });
-  });
+    const fontColor = isDark ? '#d1d5db' : '#374151';
 
-  // Custom tick labels — y-axis (left) and x-axis (bottom, rotated)
-  const tickSize = n > 25 ? 8 : 9;
-  const defaultTickColor = isDark ? '#6b7280' : '#9ca3af';
+    return { sorted, sortedRev, n, z, hoverText, shapes, annotations, fontColor };
+  }, [matrix, tickers, sectorMap, portfolioTickers, correlationScores, isDark]);
 
-  const getCandidateColor = (ticker: string): string => {
-    const score = correlationScores?.[ticker];
-    return score != null ? candidateLabelColor(score) : '#ef4444';
-  };
-
-  sortedRev.forEach((ticker, i) => {
-    const isPort = portfolioSet.has(ticker);
-    const isCandidate = hasPortfolioContext && !isPort;
-    const color = isCandidate ? getCandidateColor(ticker) : defaultTickColor;
-    const label = isPort ? `${ticker} ◆` : ticker;
-    annotations.push({
-      x: -0.01,
-      y: (i + 0.5) / n,
-      xref: 'paper', yref: 'paper',
-      text: label,
-      showarrow: false,
-      font: { size: tickSize, color },
-      xanchor: 'right',
-      yanchor: 'middle',
-    });
-  });
-
-  sorted.forEach((ticker, j) => {
-    const isPort = portfolioSet.has(ticker);
-    const isCandidate = hasPortfolioContext && !isPort;
-    const color = isCandidate ? getCandidateColor(ticker) : defaultTickColor;
-    const label = isPort ? `${ticker} ◆` : ticker;
-    annotations.push({
-      x: (j + 0.5) / n,
-      y: -0.01,
-      xref: 'paper', yref: 'paper',
-      text: label,
-      showarrow: false,
-      font: { size: tickSize, color },
-      xanchor: 'right',
-      yanchor: 'top',
-      textangle: -40,
-    });
-  });
-
-  if (hasPortfolioContext) {
-    annotations.push({
-      x: 1.18, y: -0.05,
-      xref: 'paper', yref: 'paper',
-      text: '◆ current  ·  red = low corr  ·  blue = high corr',
-      showarrow: false,
-      font: { size: 8, color: isDark ? '#6b7280' : '#9ca3af' },
-      xanchor: 'left', yanchor: 'top',
-    });
-  }
-
-  const fontColor = isDark ? '#d1d5db' : '#374151';
+  if (!memoized) return null;
+  const { sorted, sortedRev, n: _n, z, hoverText, shapes, annotations, fontColor } = memoized;
 
   return (
     <div className="bg-white dark:bg-gray-900 rounded-lg p-4 border border-stone-200 dark:border-gray-800">

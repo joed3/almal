@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-05-15
+
+### Added
+- **`useChartTheme` hook:** Centralised dark/light Plotly colour tokens (`fontColor`, `gridcolor`, `axisColor`) consumed by all chart components — replaces ad-hoc `isDark` prop threading.
+- **`AutocompleteInput` component:** Unified debounced search input used across PortfolioResearch, DiversifyPage, and the Dashboard benchmark picker.
+- **PortfolioResearch page (`/research`):** Dedicated page for single-ticker analysis, split out from the old Investigator. Reads a `?ticker=` URL param on mount to auto-trigger analysis when navigated from DiversifyPage.
+- **DiversifyPage (`/diversify`):** Dedicated page for portfolio diversification suggestions, split out from the old Investigator. Category chips (10 groups: Fixed Income, International, Commodities, Real Estate, Low Vol, Factor/Sector, Large-Cap, Tech, Growth, Dividend) replace the old checkbox tree.
+- **Optimizer visual stepper:** Configure → Results transition on the same `/optimizer` route; a "← Reconfigure" button resets to the input form.
+- **Structured constraint form in Optimizer:** Global max/min position % fields as primary constraint inputs; NLP free-text constraint entry is now a collapsible secondary section.
+- **Position lock in Optimizer (Phase 1):** Per-holding lock toggles in rebalance mode, with "Lock all" / "Clear" bulk controls. Locked tickers are sent as `no_sell_tickers` and prevent the optimizer from reducing any position below its current share count.
+- **Backend position lock:** `ConstraintSet` model extended with `max_shares: dict[str, float]` and `no_sell_tickers: list[str]`. The optimization engine resolves `no_sell_tickers` into `min_shares` entries at solve time, and enforces `max_shares` ceilings in weight bounds.
+- **`useMemo` for Plotly traces:** `RiskReturnScatter` memoizes the sector → traces array on `[points, isDark, yMetric]`; `CorrelationHeatmap` memoizes the full clustering + `z` matrix + shapes + annotations computation on `[matrix, tickers, sectorMap, portfolioTickers, correlationScores, isDark]`, avoiding O(n²) greedy-order re-runs on unrelated re-renders.
+
+### Changed
+- **Navigation restructured:** `TopNav` items relabelled — "Dashboard" (`/`), "Research" (`/research`), "Diversify" (`/diversify`), "Optimize" (`/optimizer`). Old `/investigator` route removed.
+- **Dashboard:** Benchmark controls moved into a Settings popover (outside-click to dismiss); correlation heatmap collapsed by default with a chevron toggle; page heading changed to "Dashboard".
+- **Optimizer:** "Moderate" optimization strategy renamed to "Balanced".
+- **All search inputs debounced at 250 ms** (benchmark picker, ticker research, diversify candidate tickers).
+- **`AppContext`:** Removed `investigatorMode` field (routing now handles mode separation); added `optimizerLockedTickers: string[]`.
+
+### Removed
+- `Investigator.tsx` single-component page — replaced by the route-split `PortfolioResearch.tsx` and `DiversifyPage.tsx`.
+
 ## [1.1.0] - 2026-05-14
 
 ### Added
