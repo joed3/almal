@@ -2,6 +2,9 @@ import { useState } from 'react';
 import _Plot from 'react-plotly.js';
 import MetricCard from '../components/MetricCard';
 import NarrativeBlock from '../components/NarrativeBlock';
+import CorrelationHeatmap from '../components/CorrelationHeatmap';
+import RiskReturnScatter from '../components/RiskReturnScatter';
+import type { ScatterPoint } from '../components/RiskReturnScatter';
 import { useAppContext } from '../context/AppContext';
 import { useTheme } from '../context/ThemeContext';
 import type { Horizon } from '../context/AppContext';
@@ -41,6 +44,8 @@ interface HoldingWeight {
   ticker: string;
   market_value: number;
   weight: number;
+  sector?: string | null;
+  name?: string | null;
 }
 
 interface ProfileResult {
@@ -49,6 +54,8 @@ interface ProfileResult {
   weights: HoldingWeight[];
   portfolio_series: Record<string, number>;
   narrative: string | null;
+  correlation_matrix?: Record<string, Record<string, number>> | null;
+  ticker_metrics?: Record<string, PerformanceMetrics> | null;
 }
 
 interface AgentResponse {
@@ -129,7 +136,9 @@ export default function PortfolioProfiler() {
     portfolio,
     profilerResult, setProfilerResult: setResult,
     selectedBenchmarks, setSelectedBenchmarks,
-    horizon, setHorizon
+    horizon, setHorizon,
+    profilerLoading, setProfilerLoading,
+    profilerApiError, setProfilerApiError,
   } = context;
 
   const { isDark } = useTheme();
@@ -142,10 +151,14 @@ export default function PortfolioProfiler() {
   const [bmSearching, setBmSearching] = useState(false);
   const [bmDropdown, setBmDropdown] = useState(false);
 
-  const [loading, setLoading] = useState(false);
-  const [apiError, setApiError] = useState<string | null>(null);
+  // Loading/error from context so navigation doesn't cancel in-flight requests
+  const loading = profilerLoading;
+  const setLoading = setProfilerLoading;
+  const apiError = profilerApiError;
+  const setApiError = setProfilerApiError;
 
   const [weightSortAsc, setWeightSortAsc] = useState(false);
+  const [groupBySector, setGroupBySector] = useState(true);
 
   const downloadProfileCSV = () => {
     if (!result) return;
@@ -574,21 +587,53 @@ export default function PortfolioProfiler() {
             />
           </div>
 
+          {/* Risk / Return scatter */}
+          {result.ticker_metrics && (() => {
+            const scatterPoints: ScatterPoint[] = result.weights
+              .filter((w) => result.ticker_metrics![w.ticker] != null)
+              .map((w) => ({
+                ticker: w.ticker,
+                volatility: result.ticker_metrics![w.ticker].volatility,
+                annualized_return: result.ticker_metrics![w.ticker].annualized_return,
+                sharpe_ratio: result.ticker_metrics![w.ticker].sharpe_ratio,
+                sector: w.sector ?? null,
+                weight: w.weight,
+                isPortfolio: true,
+              }));
+            if (scatterPoints.length < 2) return null;
+            return (
+              <RiskReturnScatter
+                points={scatterPoints}
+                isDark={isDark}
+                title="Risk / Return — Holdings"
+                height={360}
+              />
+            );
+          })()}
+
           {/* Holdings weight table */}
           <div className="bg-white dark:bg-gray-900 rounded-lg overflow-hidden border border-stone-200 dark:border-gray-800">
             <div className="px-4 py-3 border-b border-stone-200 dark:border-gray-800 flex items-center justify-between">
               <h2 className="text-sm font-medium text-stone-600 dark:text-gray-300 uppercase tracking-wide">
                 Holdings Weights
               </h2>
-              <button
-                onClick={downloadProfileCSV}
-                className="flex items-center gap-1.5 text-xs text-stone-500 dark:text-gray-400 hover:text-stone-800 dark:hover:text-gray-200 transition-colors"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Download CSV
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setGroupBySector((g) => !g)}
+                  className={`text-xs px-2 py-1 rounded border transition-colors ${groupBySector ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300' : 'bg-white dark:bg-gray-800 border-stone-200 dark:border-gray-700 text-stone-500 dark:text-gray-400 hover:text-stone-700 dark:hover:text-gray-200'}`}
+                >
+                  Group by Sector
+                </button>
+                <button
+                  onClick={downloadProfileCSV}
+                  className="flex items-center gap-1.5 text-xs text-stone-500 dark:text-gray-400 hover:text-stone-800 dark:hover:text-gray-200 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download CSV
+                </button>
+              </div>
             </div>
             <table className="w-full text-sm">
               <thead>
@@ -597,14 +642,70 @@ export default function PortfolioProfiler() {
                   <th className="px-4 py-2 font-medium text-right">Market Value</th>
                   <th
                     className="px-4 py-2 font-medium text-right cursor-pointer select-none hover:text-stone-900 dark:hover:text-white"
-                    onClick={() => setWeightSortAsc((s) => !s)}
+                    onClick={() => !groupBySector && setWeightSortAsc((s) => !s)}
                   >
-                    Weight {weightSortAsc ? '▲' : '▼'}
+                    Weight {!groupBySector && (weightSortAsc ? '▲' : '▼')}
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {sortedWeights.map((w) => (
+                {groupBySector ? (() => {
+                  const hasSectorData = result!.weights.some((w) => w.sector !== undefined);
+                  if (!hasSectorData) {
+                    return sortedWeights.map((w) => (
+                      <tr key={w.ticker} className="border-b border-stone-100 dark:border-gray-800 hover:bg-stone-50 dark:hover:bg-gray-800/50">
+                        <td className="px-4 py-2 font-medium text-stone-900 dark:text-white">{w.ticker}</td>
+                        <td className="px-4 py-2 text-right text-stone-600 dark:text-gray-300">
+                          ${w.market_value.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                        </td>
+                        <td className="px-4 py-2 text-right text-stone-600 dark:text-gray-300">{pct(w.weight)}</td>
+                      </tr>
+                    ));
+                  }
+                  const sectorGroups: Record<string, HoldingWeight[]> = {};
+                  for (const w of result!.weights) {
+                    const key = w.sector ?? 'ETF / Fund';
+                    if (!sectorGroups[key]) sectorGroups[key] = [];
+                    sectorGroups[key].push(w);
+                  }
+                  const sortedSectors = Object.entries(sectorGroups).sort(
+                    ([, a], [, b]) =>
+                      b.reduce((s, w) => s + w.weight, 0) - a.reduce((s, w) => s + w.weight, 0)
+                  );
+                  return sortedSectors.flatMap(([sector, holdings]) => {
+                    const sectorWeight = holdings.reduce((s, w) => s + w.weight, 0);
+                    const sectorValue = holdings.reduce((s, w) => s + w.market_value, 0);
+                    return [
+                      <tr key={`sector-${sector}`} className="bg-stone-50 dark:bg-gray-800/60 border-b border-stone-200 dark:border-gray-700">
+                        <td className="px-4 py-2 font-semibold text-stone-700 dark:text-gray-200 text-xs uppercase tracking-wide">{sector}</td>
+                        <td className="px-4 py-2 text-right text-xs font-semibold text-stone-600 dark:text-gray-300">
+                          ${sectorValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                        </td>
+                        <td className="px-4 py-2 text-right text-xs font-semibold text-blue-600 dark:text-blue-400">
+                          {pct(sectorWeight)}
+                        </td>
+                      </tr>,
+                      ...holdings
+                        .sort((a, b) => b.weight - a.weight)
+                        .map((w) => (
+                          <tr key={w.ticker} className="border-b border-stone-100 dark:border-gray-800/60 hover:bg-stone-50 dark:hover:bg-gray-800/30">
+                            <td className="pl-8 pr-4 py-2 text-stone-900 dark:text-white">
+                              <span className="font-medium">{w.ticker}</span>
+                              {w.name && (
+                                <span className="ml-2 text-xs text-stone-400 dark:text-gray-500">{w.name}</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2 text-right text-stone-600 dark:text-gray-300">
+                              ${w.market_value.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                            </td>
+                            <td className="px-4 py-2 text-right text-stone-600 dark:text-gray-300">
+                              {pct(w.weight)}
+                            </td>
+                          </tr>
+                        )),
+                    ];
+                  });
+                })() : sortedWeights.map((w) => (
                   <tr key={w.ticker} className="border-b border-stone-100 dark:border-gray-800 hover:bg-stone-50 dark:hover:bg-gray-800/50">
                     <td className="px-4 py-2 font-medium text-stone-900 dark:text-white">{w.ticker}</td>
                     <td className="px-4 py-2 text-right text-stone-600 dark:text-gray-300">
@@ -618,6 +719,24 @@ export default function PortfolioProfiler() {
               </tbody>
             </table>
           </div>
+
+          {/* Correlation heatmap */}
+          {result.correlation_matrix && Object.keys(result.correlation_matrix).length >= 2 && (() => {
+            const sectorMap: Record<string, string | null> = {};
+            for (const w of result.weights) sectorMap[w.ticker] = w.sector ?? null;
+            const holdingTickers = result.weights.map((w) => w.ticker);
+            const heatH = Math.max(380, Math.min(620, holdingTickers.length * 22 + 100));
+            return (
+              <CorrelationHeatmap
+                matrix={result.correlation_matrix!}
+                tickers={holdingTickers}
+                sectorMap={sectorMap}
+                isDark={isDark}
+                title="Holdings Correlation"
+                height={heatH}
+              />
+            );
+          })()}
 
           {/* Review narrative */}
           {result.narrative && (

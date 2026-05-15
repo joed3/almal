@@ -67,11 +67,15 @@ class HoldingWeight(BaseModel):
         ticker: The ticker symbol.
         market_value: Current market value (shares × price).
         weight: Fraction of total portfolio value, 0.0–1.0.
+        sector: GICS sector from yfinance, or None for ETFs/unknown.
+        name: Long name from yfinance, or None if unavailable.
     """
 
     ticker: str
     market_value: float
     weight: float
+    sector: str | None = None
+    name: str | None = None
 
 
 class ProfileResult(BaseModel):
@@ -90,6 +94,8 @@ class ProfileResult(BaseModel):
     weights: list[HoldingWeight]
     portfolio_series: dict[str, float]
     narrative: str | None = None
+    correlation_matrix: dict[str, dict[str, float]] | None = None
+    ticker_metrics: dict[str, PerformanceMetrics] | None = None
 
 
 class TickerAnalysisResult(BaseModel):
@@ -273,6 +279,8 @@ class PortfolioAnalyzer:
         self,
         holdings: list[Holding],
         latest_prices: dict[str, float],
+        sector_map: dict[str, str | None] | None = None,
+        name_map: dict[str, str | None] | None = None,
     ) -> list[HoldingWeight]:
         """Compute current market-value weight for each holding.
 
@@ -281,6 +289,8 @@ class PortfolioAnalyzer:
         Args:
             holdings: List of Holding objects with total_shares populated.
             latest_prices: Map of ticker → current price.
+            sector_map: Optional map of ticker → GICS sector string (or None).
+            name_map: Optional map of ticker → long name string (or None).
 
         Returns:
             List of HoldingWeight objects, sorted descending by weight.
@@ -302,6 +312,8 @@ class PortfolioAnalyzer:
                 ticker=ticker,
                 market_value=market_value,
                 weight=market_value / total_value,
+                sector=sector_map.get(ticker) if sector_map else None,
+                name=name_map.get(ticker) if name_map else None,
             )
             for ticker, market_value in sorted(
                 weighted, key=lambda x: x[1], reverse=True
@@ -346,6 +358,48 @@ class PortfolioAnalyzer:
 
         s_norm = s / s.iloc[0]
         return self.compute_metrics(s_norm, risk_free_rate=risk_free_rate)
+
+    def compute_correlation_matrix(
+        self,
+        tickers: list[str],
+        price_histories: dict[str, PriceHistory],
+        min_periods: int = 30,
+    ) -> dict[str, dict[str, float]]:
+        """Compute pairwise Pearson correlation of daily returns.
+
+        Args:
+            tickers: Tickers to include (those missing from price_histories are
+                skipped).
+            price_histories: Map of ticker → PriceHistory.
+            min_periods: Minimum overlapping observations required; pairs with fewer
+                observations produce 0.0 instead of NaN.
+
+        Returns:
+            Nested dict[ticker][ticker] → correlation rounded to 3 decimal places.
+        """
+        series_map: dict[str, pd.Series] = {}
+        for ticker in tickers:
+            history = price_histories.get(ticker)
+            if history is None or not history.bars:
+                continue
+            dates = [bar.date for bar in history.bars]
+            closes = [bar.close for bar in history.bars]
+            s = pd.Series(closes, index=pd.DatetimeIndex(dates))
+            s = s.ffill(limit=5).dropna()
+            if len(s) < min_periods:
+                continue
+            series_map[ticker] = s.pct_change().dropna()
+
+        if len(series_map) < 2:
+            return {}
+
+        df = pd.DataFrame(series_map)
+        corr = df.corr(min_periods=min_periods).fillna(0.0)
+
+        return {
+            t1: {t2: round(float(corr.at[t1, t2]), 3) for t2 in corr.columns}
+            for t1 in corr.index
+        }
 
     def compute_portfolio_fit(
         self,

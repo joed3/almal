@@ -7,6 +7,159 @@ import yfinance as yf
 
 from src.models.market import PriceBar, PriceHistory, TickerInfo
 
+# ---------------------------------------------------------------------------
+# ETF sector inference
+# ---------------------------------------------------------------------------
+
+# yfinance `category` field sometimes gives a clean sector name for ETFs.
+_ETF_CATEGORY_KEYWORDS: list[tuple[str, str]] = [
+    ("Information Technology", "technology"),
+    ("Health Care", "health"),
+    ("Energy", "energy"),
+    ("Financials", "financial"),
+    ("Utilities", "utilities"),
+    ("Communication Services", "communication"),
+    ("Real Estate", "real estate"),
+    ("Industrials", "industrials"),
+    ("Materials", "materials"),
+    ("Consumer Discretionary", "consumer cyclical"),
+    ("Consumer Staples", "consumer defensive"),
+]
+
+# Keyword patterns matched against the ETF's longName (lowercased).
+_ETF_NAME_PATTERNS: list[tuple[str, list[str]]] = [
+    (
+        "Information Technology",
+        [
+            "information tech",
+            "technology select",
+            "technology etf",
+            "semiconductor",
+            "software",
+            "cybersecurity",
+            "artificial intel",
+            "robotics",
+            "cloud comput",
+            "fintech",
+        ],
+    ),
+    (
+        "Health Care",
+        [
+            "health care",
+            "healthcare",
+            "biotech",
+            "biotechnology",
+            "pharmaceutical",
+            "pharma",
+            "medical device",
+            "genomic",
+            "oncology",
+        ],
+    ),
+    (
+        "Energy",
+        [
+            "energy select",
+            "oil & gas",
+            "oil and gas",
+            "exploration & prod",
+            "clean energy",
+            "solar",
+            "wind power",
+            "mlp",
+        ],
+    ),
+    (
+        "Financials",
+        [
+            "financial select",
+            "banking sector",
+            "bank index",
+            "finance select",
+            "kbw bank",
+            "insurance sector",
+        ],
+    ),
+    (
+        "Consumer Discretionary",
+        [
+            "consumer discret",
+            "consumer cycl",
+            "retail select",
+            "e-commerce",
+        ],
+    ),
+    ("Consumer Staples", ["consumer staple", "consumer def", "food & bev"]),
+    (
+        "Industrials",
+        [
+            "industrial select",
+            "aerospace & defense",
+            "transportation select",
+            "infrastructure",
+        ],
+    ),
+    ("Materials", ["materials select", "metals & mining", "gold miner"]),
+    ("Real Estate", ["real estate", "reit", "realty"]),
+    ("Utilities", ["utilities select", "utility select"]),
+    ("Communication Services", ["communication serv", "telecom select"]),
+    (
+        "Fixed Income",
+        [
+            "treasury bond",
+            "corporate bond",
+            "municipal bond",
+            "aggregate bond",
+            "bond etf",
+            "fixed income",
+            "bond index",
+            "inflation-protected",
+        ],
+    ),
+    (
+        "Commodities",
+        [
+            "gold trust",
+            "gold etf",
+            "silver trust",
+            "commodity index",
+            "natural resources",
+        ],
+    ),
+    (
+        "International",
+        [
+            "international equity",
+            "emerging market",
+            "developed market",
+            "world ex-u.s",
+            "ex us equity",
+            "ftse developed",
+            "msci eafe",
+            "msci world",
+            "msci emerg",
+            "ftse emerg",
+            "all world",
+        ],
+    ),
+]
+
+
+def _infer_etf_sector(name: str | None, category: str | None) -> str | None:
+    """Infer a sector label for an ETF from yfinance category or long name."""
+    if category:
+        cat = category.lower()
+        for sector, keyword in _ETF_CATEGORY_KEYWORDS:
+            if keyword in cat:
+                return sector
+    if name:
+        text = name.lower()
+        for sector, keywords in _ETF_NAME_PATTERNS:
+            if any(kw in text for kw in keywords):
+                return sector
+    return None
+
 
 class MarketDataClient:
     """Thin wrapper around yfinance for fetching market data.
@@ -62,17 +215,25 @@ class MarketDataClient:
             A TickerInfo with fields populated where available.
         """
         info: dict[str, Any] = yf.Ticker(ticker).info
+        sector = info.get("sector") or _infer_etf_sector(
+            info.get("longName"), info.get("category")
+        )
         return TickerInfo(
             ticker=ticker,
             name=info.get("longName"),
-            sector=info.get("sector"),
+            sector=sector,
             industry=info.get("industry"),
             market_cap=info.get("marketCap"),
             pe_ratio=info.get("trailingPE"),
             dividend_yield=info.get("dividendYield"),
             week_52_high=info.get("fiftyTwoWeekHigh"),
             week_52_low=info.get("fiftyTwoWeekLow"),
-            current_price=info.get("currentPrice"),
+            current_price=(
+                info.get("currentPrice")
+                or info.get("regularMarketPrice")
+                or info.get("navPrice")
+                or info.get("previousClose")
+            ),
             currency=info.get("currency"),
             exchange=info.get("exchange"),
             description=info.get("longBusinessSummary"),

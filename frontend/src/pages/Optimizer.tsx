@@ -502,6 +502,10 @@ export default function Optimizer() {
     STRATEGY_LOOKBACK_DEFAULTS[strategy]
   );
 
+  // Sector metadata for grouping in AllocationTable
+  const [sectorMap, setSectorMap] = useState<Record<string, string | null>>({});
+  const [nameMap, setNameMap] = useState<Record<string, string | null>>({});
+
   // Backtest state
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestError, setBacktestError] = useState<string | null>(null);
@@ -649,6 +653,8 @@ export default function Optimizer() {
     setError(null);
     setResult(null);
     setBacktestData(null);
+    setSectorMap({});
+    setNameMap({});
 
     // Build the request payload, stripping undefined advanced params
     const cleanParams = Object.fromEntries(
@@ -684,6 +690,26 @@ export default function Optimizer() {
         throw new Error(data.error || 'Failed to run optimization');
       }
       setResult(data);
+
+      // Fetch sector/name metadata for the allocation tickers (fire and forget)
+      const allocationTickers: string[] = data.result.allocations.map((a: any) => a.ticker);
+      fetch('http://127.0.0.1:8100/market/sectors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tickers: allocationTickers }),
+      })
+        .then((r) => r.json())
+        .then((metas: { ticker: string; name: string | null; sector: string | null }[]) => {
+          const sm: Record<string, string | null> = {};
+          const nm: Record<string, string | null> = {};
+          for (const m of metas) {
+            sm[m.ticker] = m.sector;
+            nm[m.ticker] = m.name;
+          }
+          setSectorMap(sm);
+          setNameMap(nm);
+        })
+        .catch(() => {/* silently ignore sector fetch failures */});
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -1228,6 +1254,8 @@ export default function Optimizer() {
                 <AllocationTable
                   allocations={result.result.allocations}
                   leftoverCash={result.result.leftover_cash}
+                  sectorMap={Object.keys(sectorMap).length > 0 ? sectorMap : undefined}
+                  nameMap={Object.keys(nameMap).length > 0 ? nameMap : undefined}
                 />
                 <div className="flex justify-end mt-2">
                   <button

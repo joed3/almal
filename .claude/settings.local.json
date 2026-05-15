@@ -2,7 +2,14 @@
   "permissions": {
     "allow": [
       "Bash(uv run:*)",
-      "Bash(pre-commit run:*)"
+      "Bash(pre-commit run:*)",
+      "Bash(node *)",
+      "Bash(.venv/bin/python *)",
+      "Bash(npx tsc *)",
+      "Bash(frontend/node_modules/.bin/tsc --noEmit --project frontend/tsconfig.app.json)",
+      "Bash(python -c \"from src.analysis.performance import HoldingWeight, PortfolioAnalyzer; print\\('OK'\\)\")",
+      "Bash(python *)",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

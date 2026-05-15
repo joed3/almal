@@ -40,6 +40,32 @@ interface AppContextType {
   setInvestigatorResult: React.Dispatch<React.SetStateAction<any | null>>;
   investigatorNarrative: string | null;
   setInvestigatorNarrative: React.Dispatch<React.SetStateAction<string | null>>;
+  investigatorMode: string;
+  setInvestigatorMode: React.Dispatch<React.SetStateAction<string>>;
+  investigatorSuggestResults: any | null;
+  setInvestigatorSuggestResults: React.Dispatch<React.SetStateAction<any | null>>;
+  investigatorSuggestMatrix: any | null;
+  setInvestigatorSuggestMatrix: React.Dispatch<React.SetStateAction<any | null>>;
+  investigatorPortfolioSectorMap: Record<string, string | null>;
+  setInvestigatorPortfolioSectorMap: React.Dispatch<React.SetStateAction<Record<string, string | null>>>;
+  investigatorSuggestSort: string;
+  setInvestigatorSuggestSort: React.Dispatch<React.SetStateAction<string>>;
+  investigatorPortfolioMetrics: any | null;
+  setInvestigatorPortfolioMetrics: React.Dispatch<React.SetStateAction<any | null>>;
+
+  // In-flight loading flags — persisted in context so navigation doesn't cancel work
+  investigatorLoading: boolean;
+  setInvestigatorLoading: React.Dispatch<React.SetStateAction<boolean>>;
+  investigatorApiError: string | null;
+  setInvestigatorApiError: React.Dispatch<React.SetStateAction<string | null>>;
+  investigatorSuggestLoading: boolean;
+  setInvestigatorSuggestLoading: React.Dispatch<React.SetStateAction<boolean>>;
+  investigatorSuggestError: string | null;
+  setInvestigatorSuggestError: React.Dispatch<React.SetStateAction<string | null>>;
+  profilerLoading: boolean;
+  setProfilerLoading: React.Dispatch<React.SetStateAction<boolean>>;
+  profilerApiError: string | null;
+  setProfilerApiError: React.Dispatch<React.SetStateAction<string | null>>;
 
   // Optimizer Persistence
   optimizerCandidates: string[];
@@ -73,6 +99,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [investigatorResult, setInvestigatorResult] = useState<any | null>(null);
   const [investigatorNarrative, setInvestigatorNarrative] = useState<string | null>(null);
+  const [investigatorMode, setInvestigatorMode] = useState<string>('investigate');
+  const [investigatorSuggestResults, setInvestigatorSuggestResults] = useState<any | null>(null);
+  const [investigatorSuggestMatrix, setInvestigatorSuggestMatrix] = useState<any | null>(null);
+  const [investigatorPortfolioSectorMap, setInvestigatorPortfolioSectorMap] = useState<Record<string, string | null>>({});
+  const [investigatorSuggestSort, setInvestigatorSuggestSort] = useState<string>('correlation');
+  const [investigatorPortfolioMetrics, setInvestigatorPortfolioMetrics] = useState<any | null>(null);
+
+  // Loading / error state (in context so navigation doesn't abort in-flight requests)
+  const [investigatorLoading, setInvestigatorLoading] = useState(false);
+  const [investigatorApiError, setInvestigatorApiError] = useState<string | null>(null);
+  const [investigatorSuggestLoading, setInvestigatorSuggestLoading] = useState(false);
+  const [investigatorSuggestError, setInvestigatorSuggestError] = useState<string | null>(null);
+  const [profilerLoading, setProfilerLoading] = useState(false);
+  const [profilerApiError, setProfilerApiError] = useState<string | null>(null);
 
   // Optimizer state
   const [optimizerCandidates, setOptimizerCandidates] = useState<string[]>([]);
@@ -104,6 +144,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setInvestigatorResult,
         investigatorNarrative,
         setInvestigatorNarrative,
+        investigatorMode,
+        setInvestigatorMode,
+        investigatorSuggestResults,
+        setInvestigatorSuggestResults,
+        investigatorSuggestMatrix,
+        setInvestigatorSuggestMatrix,
+        investigatorPortfolioSectorMap,
+        setInvestigatorPortfolioSectorMap,
+        investigatorSuggestSort,
+        setInvestigatorSuggestSort,
+        investigatorPortfolioMetrics,
+        setInvestigatorPortfolioMetrics,
+
+        investigatorLoading,
+        setInvestigatorLoading,
+        investigatorApiError,
+        setInvestigatorApiError,
+        investigatorSuggestLoading,
+        setInvestigatorSuggestLoading,
+        investigatorSuggestError,
+        setInvestigatorSuggestError,
+        profilerLoading,
+        setProfilerLoading,
+        profilerApiError,
+        setProfilerApiError,
 
         optimizerCandidates,
         setOptimizerCandidates,

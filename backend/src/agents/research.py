@@ -126,6 +126,9 @@ class ResearchAgent(BaseAgent):
             )
 
             if not portfolio_series.empty:
+                result_data["portfolio_series"] = {
+                    str(idx.date()): float(val) for idx, val in portfolio_series.items()
+                }
                 try:
                     fit_result = analyzer.compute_portfolio_fit(
                         candidate_ticker=ticker,
@@ -172,13 +175,17 @@ class ResearchAgent(BaseAgent):
                     "Failed to fetch price history for %s: %s", ticker, exc
                 )
 
-        # Fetch latest prices for weight computation.
+        # Fetch latest prices for weight computation, also capture sector/name.
         latest_prices: dict[str, float] = {}
+        sector_map: dict[str, str | None] = {}
+        name_map: dict[str, str | None] = {}
         for holding in holdings:
             try:
                 info = market_client.fetch_ticker_info(holding.ticker)
                 if info.current_price is not None:
                     latest_prices[holding.ticker] = info.current_price
+                sector_map[holding.ticker] = info.sector
+                name_map[holding.ticker] = info.name
             except Exception as exc:  # noqa: BLE001
                 self.logger.warning(
                     "Failed to fetch ticker info for %s: %s",
@@ -243,7 +250,18 @@ class ResearchAgent(BaseAgent):
             for ticker, series in benchmark_series_map.items()
         ]
 
-        weights = analyzer.compute_holding_weights(holdings, latest_prices)
+        weights = analyzer.compute_holding_weights(
+            holdings, latest_prices, sector_map=sector_map, name_map=name_map
+        )
+
+        corr_matrix = analyzer.compute_correlation_matrix(
+            [h.ticker for h in available_holdings], holding_histories
+        )
+
+        ticker_metrics = {
+            ticker: analyzer.compute_ticker_metrics(history)
+            for ticker, history in holding_histories.items()
+        }
 
         profile = ProfileResult(
             metrics=metrics,
@@ -252,6 +270,8 @@ class ResearchAgent(BaseAgent):
             portfolio_series={
                 str(idx.date()): float(val) for idx, val in portfolio_series.items()
             },
+            correlation_matrix=corr_matrix or None,
+            ticker_metrics=ticker_metrics or None,
         )
 
         return AgentResponse(

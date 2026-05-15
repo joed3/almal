@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-05-14
+
+### Added
+- **Diversifier Suggestion Mode (Investigator):** New "Suggest" tab scores a configurable candidate pool by diversification value against the loaded portfolio. Candidates ranked by correlation ascending; filterable by curated category (Fixed Income, International Equity, Commodities, etc.) or user-supplied tickers.
+- **Risk / Return Scatter Plot:** Interactive Plotly scatter (X = volatility, Y = annualised return or Sharpe toggle) with per-sector legend click-to-toggle. Portfolio holdings shown as filled circles sized by weight; candidates shown as open circles coloured by correlation tier (red = low correlation / strong diversifier, blue = high correlation / weak diversifier, matching the heatmap colour scale).
+- **Per-ticker Performance Metrics:** Backend `ProfileResult` and `SuggestResponse` now include `ticker_metrics` / `portfolio_ticker_metrics` — individual volatility, return, Sharpe, and drawdown for every holding, enabling the scatter plot in both the Profiler and Investigator pages.
+- **Correlation-coloured Heatmap Labels:** In Investigator suggest mode, candidate ticker labels on the correlation heatmap are coloured to match their correlation tier (red / amber / blue), consistent with the scatter plot and the RdBu heatmap colour scale.
+- **Background Analysis Continuation:** In-flight API requests (portfolio profiling, ticker analysis, suggest scoring) now survive panel navigation — loading state and results are stored in `AppContext` rather than local component state, so switching tabs mid-request no longer cancels the work.
+
+### Changed
+- Investigator page layout (suggest mode): scatter plot appears first at the top of the results column, full-width correlation heatmap below the grid, full-width candidate cards below the heatmap (up to 4 columns on xl screens).
+- Scatter plot right panel stretches to match the height of the left control panel via CSS flexbox (`items-stretch` grid + `flex-1` scatter wrapper).
+- `correlationLabel` colour scheme: Strong / Good / Moderate / Weak badges now use emerald / blue / amber / red (was emerald / blue / amber / red — no change to badges, but heatmap and scatter now use a consistent red-low / blue-high colour scale).
+
 ## [1.0.0] - 2026-03-31
 
 ### Added

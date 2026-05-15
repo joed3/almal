@@ -286,3 +286,53 @@ async def test_analyze_endpoint(http_client: AsyncClient) -> None:
     assert body["intent"] == "profile_portfolio"
     assert "result" in body
     assert body["narrative"] == "Good performance overall."
+
+
+# ---------------------------------------------------------------------------
+# ticker_metrics in ProfileResult
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_research_agent_profile_includes_ticker_metrics() -> None:
+    """ProfileResult includes ticker_metrics with per-holding performance data."""
+    holdings = [_make_holding("AAPL", 10.0), _make_holding("MSFT", 5.0)]
+    request = _build_profile_request(holdings)
+
+    aapl_history = _make_price_history("AAPL", n_days=20)
+    msft_history = _make_price_history("MSFT", n_days=20, start_price=200.0)
+    spy_history = _make_price_history("SPY", n_days=20, start_price=400.0)
+
+    def fake_fetch_price_history(ticker: str, start: date, end: date) -> PriceHistory:
+        return {"AAPL": aapl_history, "MSFT": msft_history, "SPY": spy_history}[ticker]
+
+    def fake_fetch_ticker_info(ticker: str) -> TickerInfo:
+        return _make_ticker_info(
+            ticker, {"AAPL": 150.0, "MSFT": 250.0}.get(ticker, 100.0)
+        )
+
+    with (
+        patch(
+            "src.agents.research.market_client.fetch_price_history",
+            side_effect=fake_fetch_price_history,
+        ),
+        patch(
+            "src.agents.research.market_client.fetch_ticker_info",
+            side_effect=fake_fetch_ticker_info,
+        ),
+    ):
+        agent = ResearchAgent()
+        response = await agent.run(request)
+
+    assert response.success is True
+    result = response.result
+    assert "ticker_metrics" in result
+    ticker_metrics = result["ticker_metrics"]
+    assert ticker_metrics is not None
+    assert "AAPL" in ticker_metrics
+    assert "MSFT" in ticker_metrics
+    for m in ticker_metrics.values():
+        assert "volatility" in m
+        assert "sharpe_ratio" in m
+        assert "total_return" in m
+        assert "max_drawdown" in m
