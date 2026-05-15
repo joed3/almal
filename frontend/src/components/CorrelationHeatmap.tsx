@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { useMemo } from 'react';
 import _Plot from 'react-plotly.js';
 
@@ -328,11 +329,11 @@ export default function CorrelationHeatmap({
 
     const fontColor = isDark ? '#d1d5db' : '#374151';
 
-    return { sorted, sortedRev, n, z, hoverText, shapes, annotations, fontColor };
+    return { sorted, sortedRev, z, hoverText, shapes, annotations, fontColor };
   }, [matrix, tickers, sectorMap, portfolioTickers, correlationScores, isDark]);
 
   if (!memoized) return null;
-  const { sorted, sortedRev, n: _n, z, hoverText, shapes, annotations, fontColor } = memoized;
+  const { sorted, sortedRev, z, hoverText, shapes, annotations, fontColor } = memoized;
 
   return (
     <div className="bg-white dark:bg-gray-900 rounded-lg p-4 border border-stone-200 dark:border-gray-800">
